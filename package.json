@@ -1,0 +1,21 @@
+{
+  "name": "instagram-dm-inbox",
+  "version": "0.1.0",
+  "description": "Mirrors Instagram Business DMs into your Obsidian vault.",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "node esbuild.config.mjs production",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "builtin-modules": "^3.3.0",
+    "esbuild": "^0.20.2",
+    "obsidian": "^1.6.6",
+    "tslib": "^2.6.2",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  }
+}

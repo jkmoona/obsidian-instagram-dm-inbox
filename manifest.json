@@ -1,0 +1,10 @@
+{
+  "id": "instagram-dm-inbox",
+  "name": "Instagram DM Inbox",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "Mirrors your Instagram Business DMs into your Obsidian vault as notes and a Canvas thread graph.",
+  "author": "jkmoona",
+  "authorUrl": "https://github.com/jkmoona",
+  "isDesktopOnly": false
+}
