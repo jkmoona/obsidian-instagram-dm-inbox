@@ -9,16 +9,16 @@ Each conversation lives in a status folder inside your CRM directory:
 ```
 CRM/
   New/
-    @yusuf/
-      @yusuf.md                     ← profile: username, status, tags, notes
+    @alice/
+      @alice.md                     ← profile: username, status, tags, notes
       2026-07-18 - hey there.md     ← one note per DM
   Pending/
-    @emir/
-      @emir.md
+    @bob/
+      @bob.md
       2026-07-17 - hi.md
   Done/
-    @kaplumbaligi/
-      @kaplumbaligi.md
+    @charlie/
+      @charlie.md
       2026-07-15 - see you then.md
 ```
 
