@@ -15,7 +15,7 @@ export class IgCrmSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    containerEl.createEl("h2", { text: "Instagram DM Inbox" });
+    new Setting(containerEl).setName("Instagram DM Inbox").setHeading();
 
     new Setting(containerEl)
       .setName("Server URL")
@@ -96,12 +96,11 @@ export class IgCrmSettingTab extends PluginSettingTab {
   }
 
   private renderStatuses(root: HTMLElement): void {
-    root.createEl("h3", { text: "Conversation statuses" });
+    new Setting(root).setName("Conversation statuses").setHeading();
     const help = root.createEl("p", {
       text: "Each row defines a folder your conversations can live in. Type the trigger code at the end of an Instagram reply (e.g. \"Confirmed! !done\") and the server moves the conversation to that status. One status must have an empty trigger code — that's the default landing status for new conversations.",
     });
-    help.style.opacity = "0.75";
-    help.style.fontSize = "0.9em";
+    help.setCssStyles({ opacity: "0.75", fontSize: "0.9em" });
 
     const listWrap = root.createDiv();
 

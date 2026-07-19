@@ -65,7 +65,7 @@ function escapeYaml(s: string): string {
 
 function filenamePreview(text: string, maxLen: number): string {
   const cleaned = text
-    .replace(/[\\/:*?"<>|#^\[\]]/g, "")
+    .replace(/[\\/:*?"<>|#^[\]]/g, "")
     .replace(/[\r\n\t]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -212,11 +212,11 @@ export async function moveConversation(
     );
   }
 
-  // Delete empty old folder (best-effort).
+  // Trash empty old folder (best-effort, honors user's trash preference).
   const stillThere = app.vault.getAbstractFileByPath(oldDir);
   if (stillThere instanceof TFolder && stillThere.children.length === 0) {
     try {
-      await app.vault.delete(stillThere);
+      await app.fileManager.trashFile(stillThere);
     } catch {
       // ignore
     }
@@ -279,11 +279,11 @@ export async function migrateLegacyLayout(
     }
   }
 
-  // Clean up now-empty legacy folders.
+  // Clean up now-empty legacy folders (honors user's trash preference).
   for (const legacy of [profilesFolder, messagesFolder]) {
     if (legacy instanceof TFolder && legacy.children.length === 0) {
       try {
-        await app.vault.delete(legacy);
+        await app.fileManager.trashFile(legacy);
       } catch {
         // ignore
       }

@@ -35,7 +35,7 @@ export async function loadCanvas(app: App, path: string): Promise<Canvas> {
   }
   let data: Partial<Canvas>;
   try {
-    data = JSON.parse(text);
+    data = JSON.parse(text) as Partial<Canvas>;
   } catch {
     return { nodes: [], edges: [] };
   }

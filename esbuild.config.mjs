@@ -2,7 +2,7 @@ import esbuild from "esbuild";
 import process from "process";
 import fs from "fs";
 import path from "path";
-import builtins from "builtin-modules";
+import { builtinModules as builtins } from "node:module";
 
 // Load plugin/.env.local (gitignored) if present. Minimal parser — no
 // dependency needed. Existing process.env values win over file values.

@@ -111,7 +111,8 @@ export default class IgCrmPlugin extends Plugin {
   }
 
   async loadSettings() {
-    this.settings = { ...DEFAULT_SETTINGS, ...(await this.loadData()) };
+    const raw = (await this.loadData()) as Partial<PluginSettings> | null;
+    this.settings = { ...DEFAULT_SETTINGS, ...(raw ?? {}) };
     // Ensure new fields exist when upgrading from an older settings shape.
     if (!Array.isArray(this.settings.statuses) || this.settings.statuses.length === 0) {
       this.settings.statuses = DEFAULT_SETTINGS.statuses.map((s) => ({ ...s }));
@@ -354,7 +355,7 @@ export default class IgCrmPlugin extends Plugin {
     if (!userDir.startsWith("@") || basename !== `${userDir}.md`) return;
 
     const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
-    const rawStatus = fm?.status;
+    const rawStatus: unknown = fm?.status;
     if (typeof rawStatus !== "string" || !rawStatus.trim()) return;
     const yamlStatus = rawStatus.trim();
 
@@ -398,7 +399,7 @@ class StatusSuggestModal extends SuggestModal<TagStatus> {
     el.createEl("div", { text: item.name });
     if (item.code) {
       const sub = el.createEl("small", { text: `trigger: ${item.code}` });
-      sub.style.opacity = "0.6";
+      sub.setCssStyles({ opacity: "0.6" });
     }
   }
 
