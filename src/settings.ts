@@ -15,8 +15,6 @@ export class IgCrmSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
-    new Setting(containerEl).setName("Instagram DM Inbox").setHeading();
-
     new Setting(containerEl)
       .setName("Server URL")
       .setDesc("Your IG CRM hosted server.")

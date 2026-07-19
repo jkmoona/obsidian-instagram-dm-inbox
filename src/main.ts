@@ -396,7 +396,7 @@ class StatusSuggestModal extends SuggestModal<TagStatus> {
   }
 
   renderSuggestion(item: TagStatus, el: HTMLElement): void {
-    el.createEl("div", { text: item.name });
+    el.createDiv({ text: item.name });
     if (item.code) {
       const sub = el.createEl("small", { text: `trigger: ${item.code}` });
       sub.setCssStyles({ opacity: "0.6" });

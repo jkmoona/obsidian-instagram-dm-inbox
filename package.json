@@ -1,6 +1,6 @@
 {
   "name": "instagram-dm-inbox",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Mirrors Instagram Business DMs into your Obsidian vault.",
   "main": "main.js",
   "private": true,

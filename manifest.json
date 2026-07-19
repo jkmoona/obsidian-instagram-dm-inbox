@@ -1,8 +1,8 @@
 {
   "id": "instagram-dm-inbox",
   "name": "Instagram DM Inbox",
-  "version": "0.1.1",
-  "minAppVersion": "1.4.0",
+  "version": "0.1.2",
+  "minAppVersion": "1.5.5",
   "description": "Mirror your Instagram Business DMs into your vault as notes and a Canvas thread graph.",
   "author": "jkmoona",
   "authorUrl": "https://github.com/jkmoona",
