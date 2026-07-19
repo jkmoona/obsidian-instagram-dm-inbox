@@ -1,6 +1,6 @@
 # Instagram DM Inbox
 
-Mirror your Instagram Business DMs into your Obsidian vault. Every incoming message lands as a note, senders get profile notes, and the whole thread is drawn as a Canvas graph — so you can triage leads and conversations without leaving Obsidian.
+Mirror your Instagram Business DMs into your Obsidian vault. Every incoming DM lands as a note, each sender gets a profile note, and the whole thread is drawn as a Canvas graph — so you can triage leads and conversations without ever leaving Obsidian.
 
 ## What it looks like
 
