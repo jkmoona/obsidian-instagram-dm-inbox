@@ -1,4 +1,12 @@
-import { App, ButtonComponent, Notice, PluginSettingTab, Setting, TextComponent } from "obsidian";
+import {
+  App,
+  ButtonComponent,
+  Notice,
+  PluginSettingTab,
+  Setting,
+  SettingDefinitionItem,
+  TextComponent,
+} from "obsidian";
 import type IgCrmPlugin from "./main";
 import { IgCrmClient } from "./api";
 import { TagStatus } from "./types";
@@ -91,6 +99,41 @@ export class IgCrmSettingTab extends PluginSettingTab {
       );
 
     this.renderStatuses(containerEl);
+  }
+
+  getSettingDefinitions(): SettingDefinitionItem[] {
+    return [
+      {
+        name: "Server URL",
+        desc: "Your IG CRM hosted server.",
+        control: { key: "serverUrl", type: "text", placeholder: "https://..." },
+      },
+      {
+        name: "API key",
+        desc: "Issued after you connect your Instagram account on the web app.",
+        control: { key: "apiKey", type: "text" },
+      },
+      {
+        name: "CRM folder",
+        desc: "Vault-relative folder for profiles, messages, and canvas.",
+        control: { key: "crmFolder", type: "text", defaultValue: "CRM" },
+      },
+      {
+        name: "Canvas filename",
+        desc: "Master canvas inside the CRM folder.",
+        control: { key: "canvasFile", type: "text", defaultValue: "Inbox.canvas" },
+      },
+      {
+        name: "Poll interval (seconds)",
+        desc: "How often to fetch new messages.",
+        control: {
+          key: "pollIntervalSeconds",
+          type: "number",
+          defaultValue: 5,
+          min: 1,
+        },
+      },
+    ];
   }
 
   private renderStatuses(root: HTMLElement): void {
