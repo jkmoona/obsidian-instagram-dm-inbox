@@ -1,0 +1,34 @@
+name: Bug report
+description: Something in the plugin isn't working as expected.
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+      placeholder: |
+        1. Sent a DM with "!done" at the end
+        2. Expected the conversation folder to move to Done/
+        3. Nothing moved after several minutes
+    validations:
+      required: true
+  - type: textarea
+    id: debug-info
+    attributes:
+      label: Debug info
+      description: >
+        In Obsidian, run the command "Instagram DM Inbox: Copy debug info"
+        and paste the result here. It contains version numbers and settings
+        presence only, with no keys, tokens, or message content.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: console
+    attributes:
+      label: Console errors (optional)
+      description: >
+        Open the developer console (Ctrl/Cmd-Shift-I → Console), filter for
+        "igcrm", and paste anything red or suspicious.
+      render: text

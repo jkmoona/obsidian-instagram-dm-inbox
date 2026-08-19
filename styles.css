@@ -1,0 +1,25 @@
+/* Instagram DM Inbox plugin styles */
+
+/* Help text in the settings tab, under the funnel stages editor. */
+.igcrm-help {
+  opacity: 0.75;
+  font-size: 0.9em;
+}
+
+/* Trigger-code hint under each row of the status suggester. */
+.igcrm-suggestion-hint {
+  opacity: 0.6;
+}
+
+/* The file explorer status colours are NOT here on purpose. They are generated
+ * in explorer_css.ts, because CSS cannot interpolate a user-defined folder name
+ * into a [data-path=...] selector.
+ *
+ * Splitting the declarations out and leaving only custom properties in the
+ * generated sheet was tried and reverted: custom properties inherit, so a
+ * colour set on a status folder cascades onto every conversation folder nested
+ * inside it, and the rail appears on all of them. Registering the properties
+ * with `inherits: false` does not help either, since a registered property
+ * resolves to its initial value instead of the var() fallback, which restyles
+ * every folder in the vault. A generated stylesheet is accepted practice; a
+ * visible regression is not. */
