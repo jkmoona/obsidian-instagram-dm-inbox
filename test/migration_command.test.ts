@@ -143,6 +143,40 @@ describe("Run layout migration", () => {
   });
 });
 
+describe("a migration and the poll loop cannot run at once", () => {
+  it("tick does nothing while a migration is in flight", async () => {
+    // Both move folders around the same subtree. `migrationPending` does not
+    // cover this: it is false on a vault whose migratedToV02 is latched, and the
+    // migrate command stays available for content restored from a backup, so the
+    // 5s interval used to keep firing straight through the run. Reconcile could
+    // then move a conversation the migration was walking, leaving its notes filed
+    // under the stage it had just left, on a tree that reports itself migrated.
+    const app = new App();
+    app.vault.folders.add("CRM");
+    const plugin = newPlugin(app, {
+      serverUrl: "https://server.test",
+      apiKey: "k",
+      migratedToV02: true,
+    });
+    const anyPlugin = plugin as unknown as Record<string, unknown>;
+
+    const urls: string[] = [];
+    __setRequestUrl((p) => {
+      urls.push(String(p.url));
+      return { status: 200, json: [] };
+    });
+
+    anyPlugin.migrating = true;
+    await (anyPlugin.tick as (m?: boolean) => Promise<void>).call(plugin, false);
+    expect(urls).toEqual([]);
+
+    // And it resumes once the migration is done, so the guard is not a latch.
+    anyPlugin.migrating = false;
+    await (anyPlugin.tick as (m?: boolean) => Promise<void>).call(plugin, false);
+    expect(urls.length).toBeGreaterThan(0);
+  });
+});
+
 describe("the oldest Profiles/ + Messages/ layout", () => {
   // This migration used to run on load with no consent at all, and recorded
   // itself as done in a `finally`, so a run that threw part-way left a

@@ -15,6 +15,19 @@ export interface ConversationRef {
 }
 
 /**
+ * A file's cached frontmatter, as a record of unknowns.
+ *
+ * Obsidian types `CachedMetadata.frontmatter` as `any`, so reading a key off it
+ * spreads `any` through whatever it touches, and the 0.2.0 community review
+ * flagged eleven such sites under no-unsafe-assignment, no-unsafe-argument and
+ * no-unsafe-member-access. Narrowing once here means every caller gets `unknown`
+ * and has to check the type it wants, which those callers already did.
+ */
+function frontmatterOf(app: App, file: TFile): Record<string, unknown> | undefined {
+  return app.metadataCache.getFileCache(file)?.frontmatter;
+}
+
+/**
  * Given an arbitrary file or folder inside a conversation, return
  * the conversation's current funnel + username + igsid. Accepts a TFile
  * (the profile, a legacy flat message note, or a note inside `_history/`)
@@ -51,7 +64,7 @@ export async function resolveConversation(
   // rename when the cache hasn't caught up. Falling through matters:
   // applyManualFunnel skips the server POST when igsid is empty, so a silent
   // miss would drop the funnel change on the floor.
-  const cached = app.metadataCache.getFileCache(profileFile)?.frontmatter?.igsid;
+  const cached: unknown = frontmatterOf(app, profileFile)?.igsid;
   let igsid =
     typeof cached === "string" ? cached.trim() : typeof cached === "number" ? String(cached) : "";
   if (!igsid) {
@@ -147,10 +160,15 @@ function escapeYaml(s: string): string {
       .replace(/\n/g, "\\n")
       .replace(/\r/g, "\\r")
       .replace(/\t/g, "\\t")
-      // The rest of C0 has no escape worth emitting; drop it rather than write
-      // a block that cannot be parsed back.
-      // eslint-disable-next-line no-control-regex
-      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "")
+      // Whatever control characters remain have no escape worth emitting; drop
+      // them rather than write a block that cannot be parsed back. The three
+      // that do have escapes are handled just above, so this cannot eat them.
+      //
+      // `\p{Cc}` rather than a literal range: spelling the range out puts
+      // control escapes in the source, which `no-control-regex` flags and which
+      // then needs suppressing, and the obvious range stops at U+001F while DEL
+      // and the C1 block (U+007F-U+009F) are just as unprintable in YAML.
+      .replace(/\p{Cc}/gu, "")
   );
 }
 
@@ -189,7 +207,57 @@ export async function ensureFolder(app: App, folder: string): Promise<void> {
 }
 
 export function conversationFolder(crmFolder: string, funnel: string, username: string): string {
-  return normalizePath(`${crmFolder}/${funnelFolderName(funnel)}/@${safe(username)}`);
+  return conversationFolderIn(crmFolder, funnelFolderName(funnel), username);
+}
+
+/**
+ * The same path, from a stage FOLDER name rather than a stage name.
+ *
+ * Anything already resolved against disk by `stageFolderSpelling` has to come
+ * through here: `conversationFolder` runs its argument through
+ * `funnelFolderName`, which would re-capitalise the very spelling that was just
+ * read off the folder.
+ */
+export function conversationFolderIn(
+  crmFolder: string,
+  stageFolder: string,
+  username: string,
+): string {
+  return normalizePath(`${crmFolder}/${stageFolder}/@${safe(username)}`);
+}
+
+export function profileNotePathIn(
+  crmFolder: string,
+  stageFolder: string,
+  username: string,
+): string {
+  const dir = conversationFolderIn(crmFolder, stageFolder, username);
+  return normalizePath(`${dir}/@${safe(username)}.md`);
+}
+
+/**
+ * The stage name as the folder on disk actually spells it, or the derived
+ * spelling when no such folder exists yet.
+ *
+ * `funnelFolderName` upper-cases the first letter, and `getAbstractFileByPath` is
+ * exact-case, so a path rebuilt from a stage name misses a folder cased any other
+ * way. That happens routinely rather than exotically: stage folders are created
+ * lazily, the shipped stage names are lowercase, and the docs tell people to drag
+ * conversations between stage folders, so a hand-made `Instagram DMs/shipped` is
+ * ordinary. `funnelByFolderName` then accepts it case-insensitively while every
+ * path built from it pointed at `Shipped`, and a move became a no-op that
+ * reported success: the folder said one thing, the note kept saying another, and
+ * it never converged.
+ */
+export function stageFolderSpelling(app: App, crmFolder: string, funnel: string): string {
+  const derived = funnelFolderName(funnel);
+  const root = app.vault.getAbstractFileByPath(normalizePath(crmFolder));
+  if (!(root instanceof TFolder)) return derived;
+  const want = derived.toLowerCase();
+  for (const child of root.children) {
+    if (child instanceof TFolder && child.name.toLowerCase() === want) return child.name;
+  }
+  return derived;
 }
 
 /**
@@ -239,7 +307,7 @@ function locateConversation(
   const legacy = legacySafe(username);
   if (legacy !== primary) {
     const old = scanForProfile(app, crmFolder, legacy);
-    if (old && app.metadataCache.getFileCache(old.profile)?.frontmatter?.username === username) {
+    if (old && frontmatterOf(app, old.profile)?.username === username) {
       return { funnel: old.funnel, diskUsername: legacy };
     }
   }
@@ -275,7 +343,7 @@ export async function onDiskUsername(
 
   // Whose folder is it? The trimmed name may genuinely belong to a different
   // account, and continuing there would merge two people's conversations.
-  const cached = old.profile ? app.metadataCache.getFileCache(old.profile)?.frontmatter : undefined;
+  const cached = old.profile ? frontmatterOf(app, old.profile) : undefined;
   const owner =
     typeof cached?.username === "string"
       ? cached.username
@@ -517,7 +585,9 @@ export async function writeFrontmatter(
   file: TFile,
   mutate: (fm: Record<string, unknown>) => void,
 ): Promise<void> {
-  await app.fileManager.processFrontMatter(file, (fm) => {
+  // Annotated because Obsidian types this parameter `any`, which made every
+  // line below an unsafe-any finding in the 0.2.0 review.
+  await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
     mutate(fm);
     const copy = { ...fm };
     const known = FRONTMATTER_ORDER.filter((k) => k in copy);
@@ -563,7 +633,7 @@ export async function applyContactName(
   // the order existed got rewritten on the first tick after an upgrade, across the
   // whole vault, for a cosmetic change nobody asked for. The reorder rides along
   // with writes that were happening anyway.
-  const cached = app.metadataCache.getFileCache(file)?.frontmatter;
+  const cached = frontmatterOf(app, file);
   if (cached?.name === clean) return;
 
   // Read before the write: the heading this function last wrote was built from
@@ -606,9 +676,17 @@ export async function ensureProfileNote(
   const body =
     `---\n` +
     `username: "${escapeYaml(username)}"\n` +
-    `funnel: ${funnel}\n` +
+    // Quoted like its neighbours. validateFunnelName permits `!hot`, `@vip`,
+    // `%done`, `{x}` and `- lead`, and none of those can be a plain YAML scalar:
+    // `!` opens a tag, `@` and `%` are reserved indicators, `- ` starts a block
+    // sequence, `{x}` is a flow mapping. Written raw, the block stopped parsing
+    // and frontmatterOf returned undefined for that note forever — no display
+    // name, stage writes reporting failure while still moving the folder, status
+    // writes refused, and hand-editing the YAML the only way out. `!hot` is not a
+    // contrived name either: the trigger-code box beside it says `!code`.
+    `funnel: "${escapeYaml(funnel)}"\n` +
     `tags: []\n` +
-    `created: ${localStamp(Date.now())}\n` +
+    `created: "${localStamp(Date.now())}"\n` +
     `igsid: "${escapeYaml(igsid)}"\n` +
     `---\n\n` +
     `# @${username}\n\n` +
@@ -726,7 +804,7 @@ export async function writeMessageNote(
  * body ended up corrupted and the frontmatter permanently wrong.
  */
 async function setProfileFunnel(app: App, file: TFile, newFunnel: string): Promise<void> {
-  const current = app.metadataCache.getFileCache(file)?.frontmatter?.funnel;
+  const current: unknown = frontmatterOf(app, file)?.funnel;
   if (typeof current === "string" && current.trim() === newFunnel) return;
   try {
     await writeFrontmatter(app, file, (fm: Record<string, unknown>) => {
@@ -757,7 +835,7 @@ async function setProfileFunnel(app: App, file: TFile, newFunnel: string): Promi
 export function readProfileStatus(app: App, profilePath: string): string {
   const file = app.vault.getAbstractFileByPath(profilePath);
   if (!(file instanceof TFile)) return "";
-  const fm = app.metadataCache.getFileCache(file)?.frontmatter;
+  const fm = frontmatterOf(app, file);
   if (!fm || fm.funnel === undefined) return "";
   return typeof fm.status === "string" ? fm.status.trim() : "";
 }
@@ -776,7 +854,7 @@ export async function setProfileStatus(
 ): Promise<boolean> {
   const file = app.vault.getAbstractFileByPath(profilePath);
   if (!(file instanceof TFile)) return false;
-  if (app.metadataCache.getFileCache(file)?.frontmatter?.funnel === undefined) return false;
+  if (frontmatterOf(app, file)?.funnel === undefined) return false;
   const trimmed = status.trim();
   try {
     await writeFrontmatter(app, file, (fm: Record<string, unknown>) => {
@@ -808,19 +886,40 @@ export async function moveConversation(
   app: App,
   crmFolder: string,
   username: string,
-  fromFunnel: string,
+  fromFunnel: string | null,
   toFunnel: string,
 ): Promise<string> {
-  const oldDir = conversationFolder(crmFolder, fromFunnel, username);
-  const newDir = conversationFolder(crmFolder, toFunnel, username);
-  const newProfilePath = profileNotePath(crmFolder, toFunnel, username);
+  // Both ends resolved to the spelling on disk, not to funnelFolderName's. A
+  // stage folder the user made by hand is commonly lower-cased, and an
+  // exact-case path built from the name misses it: the destination stamp landed
+  // on a note that did not exist, and the source lookup below decided there was
+  // nothing to move. Both reported success.
+  const toSpelling = stageFolderSpelling(app, crmFolder, toFunnel);
+  const newDir = conversationFolderIn(crmFolder, toSpelling, username);
+  const newProfilePath = profileNotePathIn(crmFolder, toSpelling, username);
+
+  // `null` means the conversation is already where it belongs and only its
+  // frontmatter is out of date, which is the case when the user drags a folder in
+  // from outside the CRM tree. There is no source to read.
+  //
+  // It has to be a distinct value rather than an empty string. `""` used to be
+  // passed here, and `funnelFolderName("")` returns "New" (types.ts), so the
+  // source resolved to the default stage's folder: a real, unrelated, live
+  // conversation whose notes were then moved into the folder the user dragged in.
+  if (fromFunnel === null) {
+    await updateProfileFunnel(app, newProfilePath, toFunnel);
+    return newProfilePath;
+  }
+
+  const fromSpelling = stageFolderSpelling(app, crmFolder, fromFunnel);
+  const oldDir = conversationFolderIn(crmFolder, fromSpelling, username);
 
   // Captured before anything moves. Obsidian renames the same TFile instance
   // and mutates its path, so this handle follows the note to its destination,
   // which is what lets the frontmatter write survive the index lag that the
   // old adapter fallback existed to paper over.
   const profileBefore = app.vault.getAbstractFileByPath(
-    profileNotePath(crmFolder, fromFunnel, username),
+    profileNotePathIn(crmFolder, fromSpelling, username),
   );
 
   const oldFolder = app.vault.getAbstractFileByPath(oldDir);
@@ -981,7 +1080,7 @@ async function flatMessageNotes(app: App, conv: TFolder): Promise<TFile[]> {
     // it alone made this answer "no plugin notes here" on a cold cache: the
     // migration then decided there was nothing to do and latched that, so a
     // real 0.1.x vault was never converted and never asked again.
-    const cached = app.metadataCache.getFileCache(file)?.frontmatter?.mid;
+    const cached: unknown = frontmatterOf(app, file)?.mid;
     if (cached !== undefined) {
       mine.push(file);
       continue;
@@ -1142,7 +1241,7 @@ async function legacyLayoutFiles(
     // Cache first, file second, for the same reason as flatMessageNotes above:
     // at layout-ready the metadata cache may not be built, and reading a
     // negative off it would report an un-migrated vault as already done.
-    if (app.metadataCache.getFileCache(file)?.frontmatter?.igsid !== undefined) {
+    if (frontmatterOf(app, file)?.igsid !== undefined) {
       profiles.push(file);
       continue;
     }

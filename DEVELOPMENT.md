@@ -32,6 +32,62 @@ The suite runs against a hand-rolled `obsidian` module stub in `test/obsidian-st
 
 `npm run typecheck` covers `src/` only. The tests swap the `obsidian` module for that stub, which the plugin source does not typecheck against, so pointing `tsc` at both at once cannot work. Vitest is what exercises the tests.
 
+## Community review rules
+
+The automated review that runs on a submitted release checks things `npm test` and
+`tsc` do not. Everything below is a rule this plugin has actually broken, so each
+one is enforced by a test rather than trusted to memory. The enforced ones live in
+`test/styles.test.ts`, which greps `src/` on purpose; `npm test` runs it locally, in
+the mirror pre-flight, and in the release workflow, so a violation cannot reach a
+release.
+
+| Rule | Enforced by |
+| --- | --- |
+| No stylesheet built at runtime. No `createElement("style")`, no `document.head`, no `insertRule`. | `builds no stylesheet at runtime` |
+| No imperative styling. No `setCssStyles`, no `el.style.x =`, no inline `style:`. | `assigns no styles imperatively` |
+| Every `igcrm-` class the source names exists in `styles.css`. | `defines every igcrm- class the source references` |
+| No `!important`, so a user snippet can still win. | `never uses !important` |
+| `vault.adapter` only where the Vault API cannot reach, which is `graph.json`. | `reaches for the adapter only where the Vault API cannot` |
+| Both settings render paths stay, declarative and imperative. | `keeps both the declarative and the imperative rendering paths` |
+
+Two more that no test covers, because they are about how you write rather than what
+ships:
+
+- **Anything dynamic goes in `styles.css`, keyed on a class or attribute the plugin
+  sets.** 0.2.0 generated a stylesheet to colour stage folders, because the selector
+  needed a user-defined folder name, and the review rejected it as an error. The
+  feature was dropped rather than rebuilt. If it ever comes back it needs a data
+  attribute stamped onto the explorer DOM, with the declarations static.
+- **Give every `eslint-disable` an inline description**, after a `--`. The reason
+  sitting on the line above does not count.
+
+### Two report lines that are not defects
+
+- **Clipboard access, under `## Behavior`.** Read where it sits: next to
+  `Vault Read: Pass` and `Vault Write: Pass`. That section is a capability
+  inventory, not a defect list, so there is nothing to answer and answering it
+  reads as defensive. For your own reference: the one call is `copyDebugInfo`,
+  user-initiated and write-only, and the payload reports the server URL and API key
+  as `set`/`empty` rather than by value.
+- **`display()` is deprecated since 1.13.** Keep it, for one reason only:
+  `minAppVersion` is 1.6.6, so on anything below 1.13 `getSettingDefinitions()` is
+  never called and `display()` is the whole settings tab. Do not justify it with the
+  test that asserts both paths exist — that test is a consequence of the choice, not
+  evidence for it.
+
+  Open question, deliberately not answered yet: whether to require 1.13 and delete
+  the imperative renderer. It would remove a second rendering path that has already
+  caused two shipped bugs. It would also strand anyone below 1.13 on the version
+  they have. Worth deciding on purpose, not by reflex, and not during a review cycle.
+
+### Worth adding
+
+The reviewer runs `eslint-plugin-obsidianmd` plus type-checked `typescript-eslint`.
+This repo has no ESLint, which is why a release shipped eleven `no-unsafe-*`
+findings and two undescribed directives. Adding it would catch the next batch before
+a reviewer does. Left out so far only because the fallout cannot be sized without
+installing it, and it should not land in the middle of a review cycle.
+
 ## The manual test pass
 
 The parts a test suite cannot reach, real Obsidian and real drag and drop, are

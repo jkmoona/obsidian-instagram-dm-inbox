@@ -1,23 +1,17 @@
 /**
- * Funnel stage colors, shared so the file explorer and the graph view agree.
- * Both arrays are the same length and order, indexed by stage position and
- * cycled beyond the end.
+ * Funnel stage colors, shared so the canvas and the graph view agree. Indexed by
+ * stage position and cycled beyond the end.
+ *
+ * A parallel list of theme variables used to live here for the file explorer,
+ * whose colours were applied through a generated stylesheet. The 0.2.0 community
+ * review rejects building a stylesheet at runtime, so the explorer no longer
+ * colours stages and the variables went with it. Both remaining surfaces need
+ * concrete numbers rather than theme variables: a canvas node stores a colour in
+ * the `.canvas` file and a graph group stores one in `graph.json`, so neither can
+ * hold a `var()`.
  */
 
-// Theme variables, so explorer colors follow the user's theme.
-export const FUNNEL_COLOR_VARS = [
-  "--color-blue",
-  "--color-yellow",
-  "--color-green",
-  "--color-red",
-  "--color-purple",
-  "--color-cyan",
-  "--color-orange",
-  "--color-pink",
-];
-
-// Graph color groups need concrete RGB integers, so these approximate the
-// theme hues above.
+// Graph color groups need concrete RGB integers.
 export const FUNNEL_COLOR_HEX = [
   0x4c8dff, // blue
   0xe3b341, // yellow
@@ -34,10 +28,6 @@ export const FUNNEL_COLOR_HEX = [
 function wrap(i: number, length: number): number {
   if (!Number.isFinite(i)) return 0;
   return ((Math.trunc(i) % length) + length) % length;
-}
-
-export function colorVarForIndex(i: number): string {
-  return FUNNEL_COLOR_VARS[wrap(i, FUNNEL_COLOR_VARS.length)];
 }
 
 export function colorHexForIndex(i: number): number {

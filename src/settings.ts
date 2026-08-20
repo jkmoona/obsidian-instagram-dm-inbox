@@ -56,8 +56,25 @@ export class IgCrmSettingTab extends PluginSettingTab {
     this.plugin = plugin;
   }
 
-  /** The working copy, seeded from the saved list on first use. */
+  /**
+   * The list to render: the user's edits if they have made any, otherwise
+   * whatever is saved right now.
+   *
+   * Reading must NOT create the draft. Obsidian calls `getSettingDefinitions()`
+   * once from `addSettingTab()`, for the settings search index, and this plugin
+   * calls `addSettingTab` in `onload`. A seeding getter therefore froze the rows
+   * at load time, before `pullTagConfig` had fetched the server's stage list, and
+   * `hide()` had never run to clear it. Opening settings for the first time that
+   * session showed the load-time list, and "Save stages" pushed it back — quietly
+   * reverting a stage renamed on another device, which then cost a folder rename
+   * per affected contact on the next reconcile.
+   */
   private get funnels(): Funnel[] {
+    return this.draft ?? this.plugin.settings.funnels;
+  }
+
+  /** The working copy, created on the first edit rather than the first read. */
+  private get editableFunnels(): Funnel[] {
     if (this.draft === null) {
       this.draft = this.plugin.settings.funnels.map((f) => ({
         ...f,
@@ -71,6 +88,19 @@ export class IgCrmSettingTab extends PluginSettingTab {
   hide(): void {
     this.draft = null;
     super.hide?.();
+  }
+
+  /**
+   * The saved stage list changed underneath us: a server pull, another device, or
+   * a status promoted during a sync. Re-render so the rows show it.
+   *
+   * A draft in progress wins and is left alone. Overwriting what someone is
+   * typing would be worse than showing them a stale row, and once they have
+   * edited, saving their version is what they asked for.
+   */
+  syncFromSettings(): void {
+    if (this.draft !== null) return;
+    this.refresh();
   }
 
   // --- the definitions -----------------------------------------------------
@@ -174,7 +204,7 @@ export class IgCrmSettingTab extends PluginSettingTab {
       emptyState: "No stages yet. Add one to start filing conversations.",
       items: this.funnels.map((row, index) => this.funnelRow(row, index)),
       onDelete: (index: number) => {
-        this.funnels.splice(index, 1);
+        this.editableFunnels.splice(index, 1);
         this.refresh();
       },
       onReorder: (from: number, to: number) => {
@@ -182,7 +212,7 @@ export class IgCrmSettingTab extends PluginSettingTab {
         // same list, and "Save stages" is what checks it as a whole: unique
         // names, exactly one default. Persisting a reorder on its own skipped
         // those checks and made this one row behave unlike its neighbours.
-        const list = this.funnels;
+        const list = this.editableFunnels;
         const [moved] = list.splice(from, 1);
         list.splice(to, 0, moved);
         this.refresh();
@@ -190,7 +220,16 @@ export class IgCrmSettingTab extends PluginSettingTab {
       addItem: {
         name: "Add stage",
         action: () => {
-          this.funnels.push({ name: "", code: "!" });
+          // Empty, not "!". A code starting with "!" matches the END of a reply,
+          // so a bare "!" catches "Thanks!" and everything else ending that way.
+          // Pre-filling it made the broad behaviour what you got by not choosing.
+          // Empty instead trips the "exactly one blank code" rule on save, which
+          // asks for a decision rather than making one.
+          //
+          // A bare "!" is still allowed, and useful: ties resolve to the longest
+          // code, so it sits under the specific codes as a catch-all. Do not turn
+          // this into a validation error.
+          this.editableFunnels.push({ name: "", code: "" });
           this.refresh();
         },
       },
@@ -204,12 +243,17 @@ export class IgCrmSettingTab extends PluginSettingTab {
       // search finds the row rather than just the heading.
       aliases: [row.name].filter(Boolean),
       render: (setting: Setting) => {
+        // A note, not a refusal. This configuration works and is sometimes what
+        // someone wants, but it is broad enough to be worth saying out loud.
+        if (row.code && /^!+$/.test(row.code.trim())) {
+          setting.setDesc(`"${row.code.trim()}" matches every reply that ends in "!"`);
+        }
         setting.addText((t) =>
           t
             .setPlaceholder("stage name (e.g. done)")
             .setValue(row.name)
             .onChange((v) => {
-              this.funnels[index].name = v.trim();
+              this.editableFunnels[index].name = v.trim();
             }),
         );
         setting.addText((t) =>
@@ -218,7 +262,7 @@ export class IgCrmSettingTab extends PluginSettingTab {
             .setValue(row.code ?? "")
             .onChange((v) => {
               const trimmed = v.trim();
-              this.funnels[index].code = trimmed ? trimmed : null;
+              this.editableFunnels[index].code = trimmed ? trimmed : null;
             }),
         );
         setting.addText((t) =>
@@ -226,7 +270,7 @@ export class IgCrmSettingTab extends PluginSettingTab {
             .setPlaceholder("statuses, comma separated (optional)")
             .setValue((row.statuses ?? []).join(", "))
             .onChange((v) => {
-              this.funnels[index].statuses = parseStatusList(v);
+              this.editableFunnels[index].statuses = parseStatusList(v);
             }),
         );
       },
@@ -253,14 +297,23 @@ export class IgCrmSettingTab extends PluginSettingTab {
       case "apiKey":
         s.apiKey = String(value).trim();
         break;
+      // Both of these fall back to the CURRENT value, not the shipped default.
+      //
+      // This runs per keystroke and persists immediately, so falling back to the
+      // default meant select-all-delete instantly repointed the inbox at
+      // "Instagram DMs" — and Escape does not undo a write that already happened.
+      // On a vault using any other folder that orphans the whole existing tree:
+      // findConversation stops seeing it, new DMs build a parallel one, and the
+      // server's copy is gone as soon as they are acked. Falling back to the
+      // current value makes an empty field a no-op instead.
       case "crmFolder":
         // Cleaned on the way in: a trailing slash left in place makes every
         // `startsWith(crmFolder + "/")` check miss, which silently removes
         // both commands and both context-menu items.
-        s.crmFolder = cleanPath(value, DEFAULT_SETTINGS.crmFolder);
+        s.crmFolder = cleanPath(value, s.crmFolder);
         break;
       case "canvasFile":
-        s.canvasFile = cleanPath(value, DEFAULT_SETTINGS.canvasFile);
+        s.canvasFile = cleanPath(value, s.canvasFile);
         break;
       case "pollIntervalSeconds": {
         const n = Math.floor(Number(value));
@@ -318,7 +371,7 @@ export class IgCrmSettingTab extends PluginSettingTab {
         root.createEl("p", { cls: "igcrm-help", text: String(group.emptyState) });
       }
       items.forEach((child, i) => {
-        this.renderItem(root, child as SettingDefinitionItem);
+        this.renderItem(root, child);
         // The declarative renderer supplies delete affordances itself; this
         // fallback has to draw its own.
         if (group.onDelete) {
@@ -413,8 +466,18 @@ export class IgCrmSettingTab extends PluginSettingTab {
       new Notice("Stage names must be unique.");
       return;
     }
-    if (funnels.filter((s) => s.code === null).length !== 1) {
-      new Notice("Exactly one stage must have an empty trigger code (the default).");
+    // Named rather than counted, because the new-stage row now starts with an
+    // empty code, so "two blanks" is the likely mistake and "which two?" is the
+    // first thing you want to know.
+    const landing = funnels.filter((s) => s.code === null);
+    if (landing.length !== 1) {
+      new Notice(
+        landing.length === 0
+          ? "One stage needs an empty trigger code. That's where new conversations land."
+          : `Only one stage can have an empty trigger code. Give a code to all but one of: ${landing
+              .map((s) => s.name)
+              .join(", ")}.`,
+      );
       return;
     }
     for (const s of funnels) {

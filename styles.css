@@ -11,15 +11,18 @@
   opacity: 0.6;
 }
 
-/* The file explorer status colours are NOT here on purpose. They are generated
- * in explorer_css.ts, because CSS cannot interpolate a user-defined folder name
- * into a [data-path=...] selector.
+/* Hide the plugin's own _meta folder, which holds the canvas and the debug log.
  *
- * Splitting the declarations out and leaving only custom properties in the
- * generated sheet was tried and reverted: custom properties inherit, so a
- * colour set on a status folder cascades onto every conversation folder nested
- * inside it, and the rail appears on all of them. Registering the properties
- * with `inherits: false` does not help either, since a registered property
- * resolves to its initial value instead of the var() fallback, which restyles
- * every folder in the vault. A generated stylesheet is accepted practice; a
- * visible regression is not. */
+ * Matched by suffix because the CRM folder is a user setting and CSS cannot
+ * interpolate one into a selector. The cost is that a folder named `_meta`
+ * anywhere else in the vault is hidden too.
+ *
+ * That cost is accepted rather than worked around. The alternative was building
+ * this selector at runtime and injecting it as a <style> element, which is what
+ * 0.2.0 did and what the community review rejected as an error. Stage colours
+ * went the same way: they needed the folder name in a [data-path=...] selector,
+ * so the file explorer no longer colours them. The canvas and the graph still
+ * do, and both store their colours in files rather than in CSS. */
+.nav-folder:has(> .nav-folder-title[data-path$="/_meta"]) {
+  display: none;
+}

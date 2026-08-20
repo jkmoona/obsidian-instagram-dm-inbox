@@ -10,7 +10,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildExplorerCss } from "../src/explorer_css";
 
 const SRC = join(__dirname, "..", "src");
 const sources = readdirSync(SRC)
@@ -22,6 +21,23 @@ describe("styling", () => {
   it("assigns no styles imperatively", () => {
     // setCssStyles, el.style.foo = ..., and inline style attributes.
     const banned = /setCssStyles\(|\.style\.[a-zA-Z]+\s*=|\bstyle:\s*["'`]/;
+    const offenders = sources.filter((s) => banned.test(s.text)).map((s) => s.name);
+    expect(offenders).toEqual([]);
+  });
+
+  it("builds no stylesheet at runtime", () => {
+    // The 0.2.0 community review failed on this as an Error: "Creating and
+    // attaching 'style' elements is not allowed. For loading CSS, use a
+    // 'styles.css' file instead, which Obsidian loads for you."
+    //
+    // It shipped because the explorer stage colours needed a user-defined folder
+    // name inside a [data-path=...] selector, which styles.css cannot express, so
+    // the sheet was generated and injected into <head>. The feature is gone and
+    // the only way it comes back is by accident, which is what this catches.
+    //
+    // Anything dynamic belongs in styles.css keyed on a class or attribute the
+    // plugin sets, never in a generated sheet.
+    const banned = /createElement\(\s*["'`](?:style|link)["'`]|document\.head|adoptedStyleSheets|insertRule\(/;
     const offenders = sources.filter((s) => banned.test(s.text)).map((s) => s.name);
     expect(offenders).toEqual([]);
   });
@@ -71,8 +87,13 @@ describe("settings tab", () => {
     // 0.1.4 added getSettingDefinitions and it silently suppressed a richer
     // display(); 0.1.6 removed it and lost settings-search indexing. One
     // assertion catches either mistake coming back.
-    expect(settings).toContain("getSettingDefinitions(");
-    expect(settings).toContain("display(");
+    //
+    // Matched as a declaration at class-body indentation, not as a substring.
+    // `toContain("display(")` was the first attempt and it guarded nothing:
+    // three comments and the `this.display()` call at settings.ts:310 all
+    // contain it, so deleting the method left the test green.
+    expect(settings).toMatch(/^ {2}getSettingDefinitions\(\)/m);
+    expect(settings).toMatch(/^ {2}display\(\)/m);
   });
 
   it("overrides both control accessors", () => {
@@ -85,14 +106,16 @@ describe("settings tab", () => {
 
 describe("user stylesheets stay in charge", () => {
   it("never uses !important, so a snippet or theme can override anything", () => {
-    // The generated sheet is injected into <head> at runtime, which already
-    // gives it late-cascade position. Adding !important on top of that would
-    // put the folder colours out of reach of the user's own CSS entirely.
-    const generated = buildExplorerCss("CRM", [
-      { name: "new", code: null },
-      { name: "pending", code: "!pending" },
-    ]);
-    expect(generated).not.toContain("!important");
-    expect(readFileSync(join(__dirname, "..", "styles.css"), "utf8")).not.toContain("!important");
+    // Obsidian loads styles.css after the theme, so it already wins ordinary
+    // cascade ties. !important on top of that would put these rules out of reach
+    // of the user's own snippet entirely.
+    expect(styles).not.toContain("!important");
+  });
+
+  it("hides _meta without naming a folder the user can rename", () => {
+    // The CRM folder is a setting, so this selector has to match by suffix. Worth
+    // asserting because the tempting fix, interpolating the real path, means
+    // generating the sheet at runtime, which is the error 0.2.0 shipped.
+    expect(styles).toContain('[data-path$="/_meta"]');
   });
 });

@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { App, __renderedRows, __resetRenderedRows, __setRequestUrl } from "obsidian";
 import IgCrmPlugin from "../src/main";
 import { IgCrmSettingTab, parseStatusList } from "../src/settings";
-import { DEFAULT_FUNNELS, DEFAULT_SETTINGS, PluginSettings } from "../src/types";
+import { DEFAULT_FUNNELS, PluginSettings } from "../src/types";
 import { newPlugin } from "./harness";
 
 function makeTab(overrides: Partial<PluginSettings> = {}) {
@@ -102,6 +102,19 @@ describe("the definitions cover the whole tab", () => {
 
     expect(rows(tab)).toHaveLength(DEFAULT_FUNNELS.length + 1);
   });
+
+  it("starts a new stage with no trigger code", () => {
+    // It used to be pre-filled with "!", which matches the end of every reply
+    // ending in one, so the broad behaviour was what you got by leaving the
+    // field alone. Empty makes the save rules ask for a decision instead.
+    const { plugin, tab } = makeTab();
+
+    addStage(tab);
+
+    const added = (tab as unknown as { funnels: { name: string; code: string | null }[] }).funnels
+      .at(-1);
+    expect(added?.code).toBe("");
+  });
 });
 
 describe("setControlValue", () => {
@@ -125,8 +138,11 @@ describe("setControlValue", () => {
     await tab.setControlValue("serverUrl", "  https://s.test  ");
     expect(plugin.settings.serverUrl).toBe("https://s.test");
 
+    // A blank value keeps whatever is stored — here the harness's "CRM", not
+    // DEFAULT_SETTINGS.crmFolder. See the dedicated test below for why it must
+    // not fall back to the shipped default.
     await tab.setControlValue("crmFolder", "   ");
-    expect(plugin.settings.crmFolder).toBe(DEFAULT_SETTINGS.crmFolder);
+    expect(plugin.settings.crmFolder).toBe("CRM");
 
     await tab.setControlValue("canvasFile", "");
     expect(plugin.settings.canvasFile).toBe("_meta/Inbox.canvas");
@@ -157,12 +173,35 @@ describe("setControlValue", () => {
     expect(plugin.settings.crmFolder).toBe("CRM/sub");
 
     // normalizePath turns the empty string into "/", which must not survive
-    // as a folder setting.
+    // as a folder setting. It keeps the stored value rather than resetting.
     await tab.setControlValue("crmFolder", "/");
-    expect(plugin.settings.crmFolder).toBe(DEFAULT_SETTINGS.crmFolder);
+    expect(plugin.settings.crmFolder).toBe("CRM/sub");
 
     await tab.setControlValue("canvasFile", "_meta/Inbox.canvas/");
     expect(plugin.settings.canvasFile).toBe("_meta/Inbox.canvas");
+  });
+
+  it("keeps the stored inbox folder when the field is emptied", async () => {
+    // This runs on every keystroke and persists straight away, so an empty field
+    // is a state the user passes through — select-all then type, or select-all
+    // then think again. Falling back to DEFAULT_SETTINGS.crmFolder meant the
+    // inbox instantly repointed at "Instagram DMs", and Escape cannot undo a
+    // write that already happened. On any vault not using the default name that
+    // orphans the whole tree: findConversation stops seeing it, new DMs build a
+    // parallel one, and the server's copy is gone once they are acked.
+    const { plugin, tab } = makeTab({ crmFolder: "Work/Inbox", canvasFile: "board.canvas" });
+    plugin.saveSettings = async () => undefined;
+
+    for (const blank of ["", "   ", "/"]) {
+      await tab.setControlValue("crmFolder", blank);
+      expect(plugin.settings.crmFolder).toBe("Work/Inbox");
+      await tab.setControlValue("canvasFile", blank);
+      expect(plugin.settings.canvasFile).toBe("board.canvas");
+    }
+
+    // A real value still lands.
+    await tab.setControlValue("crmFolder", "Work/Other");
+    expect(plugin.settings.crmFolder).toBe("Work/Other");
   });
 
   it("resumes polling when the API key changes, so a fix takes effect at once", async () => {
@@ -190,6 +229,46 @@ describe("the stage list is a draft until you save it", () => {
   // thing that commits, and it is what runs the whole-list checks. Editing
   // settings directly meant any OTHER control's save persisted a half-typed
   // stage that none of those checks had seen.
+
+  it("does not freeze the rows when the tab is only rendered, never edited", async () => {
+    // Obsidian calls getSettingDefinitions() once from addSettingTab(), for the
+    // settings search index, and the plugin calls addSettingTab in onload. A
+    // getter that seeded the draft on read therefore froze the list at load time,
+    // before pullTagConfig had fetched the server's stages, and hide() had never
+    // run to clear it. Opening settings for the first time that session showed the
+    // stale rows, and Save Stages pushed them back over the server's config.
+    const { plugin, tab } = makeTab();
+    plugin.saveSettings = async () => undefined;
+
+    // Rendered, as addSettingTab does. This must not take a snapshot.
+    tab.getSettingDefinitions();
+
+    // The server's list arrives afterwards.
+    plugin.settings.funnels = [
+      { name: "new", code: null },
+      { name: "warm", code: "!warm" },
+      { name: "won", code: "!won" },
+    ];
+
+    expect(rows(tab).length).toBe(3);
+    const save = (t: IgCrmSettingTab) =>
+      (t as unknown as Record<string, () => Promise<void>>).saveFunnels.call(t);
+    await save(tab);
+    expect(plugin.settings.funnels.map((f) => f.name)).toEqual(["new", "warm", "won"]);
+  });
+
+  it("keeps an in-progress edit when the saved list changes underneath it", () => {
+    // The other direction: once the user has started editing, their draft is what
+    // they asked for and a server pull must not wipe it mid-sentence.
+    const { plugin, tab } = makeTab();
+    addStage(tab);
+    const before = rows(tab).length;
+
+    plugin.settings.funnels = [{ name: "new", code: null }];
+    tab.syncFromSettings();
+
+    expect(rows(tab).length).toBe(before);
+  });
 
   it("deletes by index, in the draft", () => {
     const { plugin, tab } = makeTab();
@@ -267,6 +346,26 @@ describe("saving stages", () => {
     await save(tab);
 
     expect(JSON.stringify(plugin.settings.funnels)).toBe(before);
+  });
+
+  it("still accepts a bare ! as a deliberate catch-all", async () => {
+    // Broad, and the row now says so, but legal and sometimes wanted: ties go to
+    // the longest code, so it collects whatever a specific code did not claim.
+    // Asserted because the tempting "fix" for the broad default was to reject
+    // this value, which would break anyone relying on it.
+    const { plugin, tab } = makeTab({
+      serverUrl: "",
+      apiKey: "",
+      funnels: [
+        { name: "new", code: null },
+        { name: "touched", code: "!" },
+      ],
+    });
+    plugin.saveSettings = async () => undefined;
+
+    await save(tab);
+
+    expect(plugin.settings.funnels.map((f) => f.code)).toEqual([null, "!"]);
   });
 
   it("refuses duplicate stage names", async () => {

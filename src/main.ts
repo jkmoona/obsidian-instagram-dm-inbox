@@ -31,6 +31,8 @@ import {
   RecentEntry,
   cleanPath,
   conversationFolder,
+  conversationFolderIn,
+  stageFolderSpelling,
   ensureFolder,
   applyContactName,
   ensureProfileNote,
@@ -58,7 +60,6 @@ import {
   saveCanvas,
   syncCanvasFromContacts,
 } from "./canvas";
-import { buildExplorerCss } from "./explorer_css";
 import { applyGraphSettings } from "./graph_colors";
 import { IgCrmSettingTab } from "./settings";
 import { clearWarn, debugLog, logError, logWarn, setDebugLogging, warnOnce } from "./log";
@@ -74,6 +75,7 @@ export default class IgCrmPlugin extends Plugin {
   settings: PluginSettings = DEFAULT_SETTINGS;
   migrationPending = false;
   private migrating = false;
+  private settingTab: IgCrmSettingTab | null = null;
   private polling = false;
   private paused = false;
   private consecutiveFailures = 0;
@@ -93,8 +95,12 @@ export default class IgCrmPlugin extends Plugin {
 
   async onload() {
     await this.loadSettings();
-    this.addSettingTab(new IgCrmSettingTab(this.app, this));
-    this.applyExplorerCss();
+    // Kept so the tab can be told when the saved stage list changes underneath
+    // it. Obsidian renders it once from here for the search index, so without a
+    // nudge its rows stay frozen at load time until settings are opened and
+    // closed. See IgCrmSettingTab.syncFromSettings.
+    this.settingTab = new IgCrmSettingTab(this.app, this);
+    this.addSettingTab(this.settingTab);
 
     this.addRibbonIcon("refresh-cw", "Sync Instagram DMs", () => {
       void this.syncNow();
@@ -258,6 +264,7 @@ export default class IgCrmPlugin extends Plugin {
       if (remote.length === 0) return;
       this.settings.funnels = remote;
       await this.saveSettings();
+      this.settingTab?.syncFromSettings();
       clearWarn("pullTagConfig");
       debugLog(`adopted ${remote.length} stage(s) from the server`);
     } catch (e) {
@@ -393,20 +400,6 @@ export default class IgCrmPlugin extends Plugin {
     }
   }
 
-  private explorerStyleEl: HTMLStyleElement | null = null;
-
-  private applyExplorerCss(): void {
-    if (!this.explorerStyleEl) {
-      this.explorerStyleEl = document.createElement("style");
-      document.head.appendChild(this.explorerStyleEl);
-      this.register(() => this.explorerStyleEl?.remove());
-    }
-    this.explorerStyleEl.textContent = buildExplorerCss(
-      this.settings.crmFolder,
-      this.settings.funnels,
-    );
-  }
-
   private async openInboxCanvas(): Promise<void> {
     const path = normalizePath(`${this.settings.crmFolder}/${this.settings.canvasFile}`);
     const file = this.app.vault.getAbstractFileByPath(path);
@@ -495,6 +488,16 @@ export default class IgCrmPlugin extends Plugin {
     }
   }
 
+  /**
+   * Put a diagnostic summary on the clipboard, for pasting into an issue.
+   *
+   * The server URL and API key are reported as `set` or `empty` and never by
+   * value. That is deliberate: the whole point of this command is that it gets
+   * pasted somewhere public. The 0.2.0 community review flagged clipboard access
+   * as worth a look, and this is the only place the plugin touches it: one
+   * user-initiated write, no reads, and nothing here that the plugin did not
+   * generate itself.
+   */
   private async copyDebugInfo(): Promise<void> {
     const s = this.settings;
     const lines = [
@@ -610,14 +613,15 @@ export default class IgCrmPlugin extends Plugin {
     }
     await this.loadSettings();
     this.restartPollTimer();
-    this.applyExplorerCss();
+    // loadSettings replaced the whole object, so the tab's rows are describing a
+    // list that no longer exists.
+    this.settingTab?.syncFromSettings();
   }
 
   async saveSettings() {
     await this.saveData(this.settings);
     setDebugLogging(this.settings.debugLogging === true);
     this.restartPollTimer();
-    this.applyExplorerCss();
   }
 
   resumePolling() {
@@ -635,6 +639,18 @@ export default class IgCrmPlugin extends Plugin {
   }
 
   private async tick(manual = false) {
+    // A migration walks the whole tree moving folders, so a tick running beside
+    // it is a second file-moving pass over the same subtree with no mutual
+    // exclusion: reconcile can move a conversation that migrateToV02Layout is
+    // mid-way through, and the notes left behind end up filed under the stage it
+    // just left. `migrationPending` does not cover this. It is false on a vault
+    // whose migratedToV02 is already latched, and the "Migrate inbox layout"
+    // command stays available on purpose for content restored from a backup or a
+    // device still on 0.1.6, so the 5s interval keeps firing through the run.
+    if (this.migrating) {
+      if (manual) new Notice("Instagram DM Inbox: migration in progress.");
+      return;
+    }
     if (this.migrationPending) {
       if (manual) {
         new Notice(
@@ -1058,7 +1074,7 @@ export default class IgCrmPlugin extends Plugin {
 
   private async applyFunnelMove(
     username: string,
-    fromFunnel: string,
+    fromFunnel: string | null,
     toFunnel: string,
   ): Promise<void> {
     const folder = this.settings.crmFolder;
@@ -1066,8 +1082,17 @@ export default class IgCrmPlugin extends Plugin {
     // and the YAML watcher both key on the folder-derived name, so a raw
     // handle here would miss the guard and resurrect the self-reverting move.
     username = await onDiskUsername(this.app, folder, username);
-    const oldDir = conversationFolder(folder, fromFunnel, username);
-    const newDir = conversationFolder(folder, toFunnel, username);
+    // Resolved through the same disk-truth helper moveConversation uses, or the
+    // canvas rewrite below would target a path the files were never moved to.
+    const oldDir =
+      fromFunnel === null
+        ? null
+        : conversationFolderIn(folder, stageFolderSpelling(this.app, folder, fromFunnel), username);
+    const newDir = conversationFolderIn(
+      folder,
+      stageFolderSpelling(this.app, folder, toFunnel),
+      username,
+    );
     // Moving a conversation renames its folder, which makes Obsidian re-index
     // the profile note and fire a frontmatter change while the note still
     // holds the old funnel. Without this guard the watcher reads that as the
@@ -1083,11 +1108,16 @@ export default class IgCrmPlugin extends Plugin {
     try {
       await moveConversation(this.app, folder, username, fromFunnel, toFunnel);
 
-      // Update canvas node paths so links to the moved profile/messages don't break.
-      const canvasPath = `${folder}/${this.settings.canvasFile}`;
-      const canvas = await loadCanvas(this.app, canvasPath);
-      if (rewriteCanvasPaths(canvas, oldDir, newDir)) {
-        await saveCanvas(this.app, canvasPath, canvas);
+      // Update canvas node paths so links to the moved profile/messages don't
+      // break. Skipped when there was no source: nothing moved, so there is no
+      // old path to rewrite, and passing one in would repoint cards that belong
+      // to whatever conversation happens to sit at that path.
+      if (oldDir !== null) {
+        const canvasPath = `${folder}/${this.settings.canvasFile}`;
+        const canvas = await loadCanvas(this.app, canvasPath);
+        if (rewriteCanvasPaths(canvas, oldDir, newDir)) {
+          await saveCanvas(this.app, canvasPath, canvas);
+        }
       }
     } finally {
       const sawEvent = this.movingConversations.get(key) === true;
@@ -1102,8 +1132,11 @@ export default class IgCrmPlugin extends Plugin {
         if (profile instanceof TFile) await this.onProfileYamlChanged(profile);
       }
       // Refresh both ends now rather than waiting for a tick, which may never
-      // come while polling is paused or the vault is offline.
-      await this.refreshHubsFor([fromFunnel, toFunnel]);
+      // come while polling is paused or the vault is offline. With no source
+      // there is only one end to refresh.
+      await this.refreshHubsFor(
+        fromFunnel === null ? [toFunnel] : [fromFunnel, toFunnel],
+      );
     }
   }
 
@@ -1239,6 +1272,8 @@ export default class IgCrmPlugin extends Plugin {
       const client = new IgCrmClient(this.settings.serverUrl, this.settings.apiKey);
       this.settings.funnels = await client.putTagConfig(this.settings.funnels);
       await this.saveSettings();
+      // Mutated in place above, so the tab is holding the pre-promotion entry.
+      this.settingTab?.syncFromSettings();
       clearWarn("promote-status");
     } catch (e) {
       // Kept locally regardless: the next successful save carries it up.
@@ -1265,12 +1300,31 @@ export default class IgCrmPlugin extends Plugin {
   }
 
   private async applyManualFunnel(
-    ref: { username: string; funnel: string; igsid: string },
+    // `funnel: null` means "already at the destination, only the note is stale",
+    // which is what a drag in from outside the CRM tree looks like.
+    ref: { username: string; funnel: string | null; igsid: string },
     toFunnel: string,
   ): Promise<void> {
-    if (ref.funnel.toLowerCase() === toFunnel.toLowerCase()) return;
+    if (ref.funnel !== null && ref.funnel.toLowerCase() === toFunnel.toLowerCase()) return;
     try {
       await this.applyFunnelMove(ref.username, ref.funnel, toFunnel);
+
+      // Claim the contact BEFORE the round-trip, not after it resolves.
+      //
+      // applyFunnelMove drops its in-flight guard in its own `finally`, so the
+      // await below used to run with nothing shielding this contact. A tick
+      // landing in that window holds a contact snapshot that predates the commit,
+      // sees the folder disagree with it, and moves the folder back — rewriting
+      // `funnel:` in the note as it goes, which on the YAML path overwrites the
+      // edit the user has just typed. Reconcile skips any contact with a pending
+      // entry, so writing it first closes the window. A slow rejection made this
+      // worse, not better: it left several ticks unshielded.
+      //
+      // Safe to leave behind if anything below throws: drainPendingFunnel re-POSTs
+      // a value the folder already agrees with, and resolveWriteFunnel reads disk
+      // first, so routing is unaffected either way.
+      if (ref.igsid) this.settings.pendingFunnel[ref.igsid] = toFunnel;
+
       let accepted = true;
       if (ref.igsid && this.settings.apiKey && this.settings.serverUrl) {
         const client = new IgCrmClient(this.settings.serverUrl, this.settings.apiKey);
@@ -1282,16 +1336,13 @@ export default class IgCrmPlugin extends Plugin {
           new Notice("Moved the folder. The server hasn't caught up yet, so this will retry.");
         }
       }
-      if (ref.igsid) {
-        if (accepted) {
-          this.settings.contactFunnelCache[ref.igsid] = toFunnel;
-          delete this.settings.pendingFunnel[ref.igsid];
-        } else {
-          // Caching it would make the server look stale and let reconcile drag
-          // the folder back on the very next tick.
-          this.settings.pendingFunnel[ref.igsid] = toFunnel;
-        }
+      if (ref.igsid && accepted) {
+        this.settings.contactFunnelCache[ref.igsid] = toFunnel;
+        delete this.settings.pendingFunnel[ref.igsid];
       }
+      // On rejection the pending entry stays exactly where it was written above.
+      // Caching the value instead would make the server look stale and let
+      // reconcile drag the folder back on the very next tick.
       await this.saveData(this.settings);
       new Notice(`@${ref.username} → ${toFunnel}`);
     } catch (e) {
@@ -1380,10 +1431,16 @@ export default class IgCrmPlugin extends Plugin {
     try {
       const ref = await resolveConversation(this.app, crm, folder);
       if (!ref) return;
-      // A drag in from outside the tree has no old funnel; the empty string
-      // matches no funnel folder, so the move finds nothing to relocate and
-      // only the frontmatter gets stamped, same as before.
-      await this.applyManualFunnel({ ...ref, funnel: oldRel?.[0] ?? "" }, configured.name);
+      // A drag in from outside the tree has no old funnel, and `null` says so.
+      //
+      // This used to pass `""`, on the belief that an empty string "matches no
+      // funnel folder, so the move finds nothing to relocate". It does the
+      // opposite: `funnelFolderName("")` returns "New" (types.ts), so the source
+      // resolved to the default stage's folder. With a live conversation sitting
+      // there under the same handle, its notes were moved into the folder the user
+      // had just dragged in and the emptied folder was trashed, all reported as a
+      // successful stage change.
+      await this.applyManualFunnel({ ...ref, funnel: oldRel?.[0] ?? null }, configured.name);
     } finally {
       // applyFunnelMove sets and clears the same key inside this window; the
       // extra delete is idempotent and covers the paths that return early.

@@ -3,6 +3,68 @@
 All notable changes to the Instagram DM Inbox plugin.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.2.1 - 2026-08-20
+
+Nothing here changes your vault or your settings.
+
+### Stage folders are no longer coloured in the file explorer
+
+Those colours were applied through a stylesheet the plugin built while running,
+which the community review flags as an error: styling belongs in `styles.css`,
+which Obsidian loads for you. The colours needed your own folder names inside the
+selector, which a static file cannot express, so the feature is gone rather than
+rebuilt on something more fragile.
+
+The canvas and the graph still colour by stage, and both keep working the way they
+did. `_meta` is still hidden.
+
+### A new stage no longer starts with `!` in its trigger code
+
+The field was pre-filled with a single `!`, and because a `!` code matches the
+*end* of a reply, leaving it alone meant every reply you finished with an
+exclamation mark refiled that conversation. The field now starts empty, so saving
+asks you for a code instead of assuming a broad one.
+
+A bare `!` still works if you want it. Ties go to the longest code, so it collects
+whatever a more specific code did not claim, and the row now says as much.
+
+### Fixes
+
+Six of these came out of a review of the move and settings paths. All of them
+predate this release.
+
+- **Dragging a conversation folder in from outside the inbox tree could dismantle
+  a different one.** If a conversation with the same handle was already filed in
+  your default stage, its message notes were moved into the folder you had just
+  dragged in and the emptied folder was trashed, reported as an ordinary stage
+  change. Dragging in from outside now only updates the note it lands on.
+- **Stage edits could revert a rename made on another device.** The settings rows
+  were built once when the plugin loaded, before the stage list had been fetched,
+  so opening settings for the first time in a session showed a stale list and
+  "Save stages" pushed it back. The rows now follow the saved list, and an edit
+  you have started is never overwritten.
+- **Syncing no longer runs during a layout migration.** Both move folders, and
+  nothing stopped them running at once.
+- **A stage change could bounce back.** For a moment after the folder moved, before
+  the server had acknowledged it, a sync could disagree and move it back —
+  overwriting a `funnel:` you had just typed by hand.
+- **A stage folder you created yourself with a lower-case name now works.** Moving
+  a conversation into it reported success and did nothing.
+- **Emptying the inbox folder field no longer resets it.** It saved as you typed,
+  so clearing the box instantly repointed the plugin at the default folder and
+  orphaned your existing tree. It now keeps what is stored until you type
+  something else.
+- **A stage name starting with `!`, `@`, `%`, `{` or `-` no longer breaks the
+  contact note it is written into.** The stage went into the note's frontmatter
+  unquoted, and those characters mean something to YAML, so the block stopped being
+  readable: no display name, stage changes reporting failure while still moving the
+  folder, and statuses refusing. `!hot` was easy to land on, given the trigger-code
+  box beside the name says `!code`.
+- The message about two stages sharing a blank trigger code names which ones.
+- Internal: frontmatter reads are typed. Stage names now reject DEL and the C1
+  control block as well as C0, matching the server; one in a stage name produced
+  frontmatter Obsidian could not parse.
+
 ## 0.2.0 - 2026-08-03
 
 Two things need reading before you upgrade: the word "status" now means

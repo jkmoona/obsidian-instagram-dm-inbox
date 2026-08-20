@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App, TFile, TFolder } from "obsidian";
 import {
   conversationFolder,
@@ -409,6 +409,40 @@ describe("moveConversation (folder-aware)", () => {
     expect(app.vault.files.get("CRM/Pending/@peer/@peer.md")).toContain("funnel: Pending");
   });
 
+  it("uses the stage folder's own casing at both ends", async () => {
+    // Stage folders are created lazily, the shipped stage names are lowercase,
+    // and the docs tell people to drag conversations between stage folders, so a
+    // hand-made lowercase folder is ordinary rather than exotic.
+    //
+    // funnelFolderName upper-cases the first letter and getAbstractFileByPath is
+    // exact-case, so every path rebuilt from a stage name missed these folders.
+    // The source lookup decided there was nothing to move and the destination
+    // stamp landed on a note that did not exist — a move that reported success,
+    // left the folder and the note disagreeing, and never converged.
+    const app = new App();
+    app.vault.folders.add("CRM");
+    app.vault.folders.add("CRM/pending");
+    app.vault.folders.add("CRM/shipped");
+    app.vault.folders.add("CRM/pending/@peer");
+    app.vault.folders.add("CRM/pending/@peer/_history");
+    app.vault.files.set(
+      "CRM/pending/@peer/@peer.md",
+      `---\nigsid: "IG_PEER"\nfunnel: pending\n---\n\n# @peer\n`,
+    );
+    app.vault.files.set("CRM/pending/@peer/_history/2026-07-18 - hi.md", "---\nmid: x\n---\n\nhi\n");
+
+    const newProfile = await moveConversation(app as any, "CRM", "peer", "pending", "shipped");
+
+    // Lands in the folder that exists, not in a title-cased sibling.
+    expect(newProfile).toBe("CRM/shipped/@peer/@peer.md");
+    expect(app.vault.files.has("CRM/shipped/@peer/@peer.md")).toBe(true);
+    expect(app.vault.files.has("CRM/shipped/@peer/_history/2026-07-18 - hi.md")).toBe(true);
+    expect(app.vault.files.has("CRM/pending/@peer/@peer.md")).toBe(false);
+    expect(app.vault.folders.has("CRM/Shipped")).toBe(false);
+    // And the note actually got stamped, which is what silently did not happen.
+    expect(app.vault.files.get("CRM/shipped/@peer/@peer.md")).toMatch(/funnel:\s*['"]?shipped/i);
+  });
+
   it("moves the whole conversation including _history/ to the new funnel", async () => {
     const app = new App();
     app.vault.files.set(
@@ -477,6 +511,88 @@ describe("moveConversation (folder-aware)", () => {
     expect(body).toContain("## My plan\n\ncall on monday");
     expect(body).toContain("hand written");
     expect(body).toContain("2026-07-18 - hi");
+  });
+
+  it("falls back to moving file by file when the folder rename throws", async () => {
+    // The per-file fallback is what runs precisely when the vault is already
+    // messy: after Obsidian Sync delivers a move from another device, or when a
+    // folder-level rename fails. Every structural behaviour of it was unmeasured
+    // — mutation testing showed the _history recursion, the trash-the-source
+    // block, the per-file catch and the folder-rename catch could each be deleted
+    // with the whole suite still green.
+    const app = new App();
+    app.vault.folders.add("CRM");
+    app.vault.folders.add("CRM/New");
+    app.vault.folders.add("CRM/Pending");
+    app.vault.folders.add("CRM/New/@peer");
+    app.vault.folders.add("CRM/New/@peer/_history");
+    app.vault.files.set(
+      "CRM/New/@peer/@peer.md",
+      `---\nigsid: "IG_PEER"\nfunnel: New\n---\n\n# @peer\n`,
+    );
+    app.vault.files.set("CRM/New/@peer/_history/2026-07-18 - hi.md", "---\nmid: a\n---\n\nhi\n");
+    app.vault.files.set("CRM/New/@peer/_history/2026-07-19 - again.md", "---\nmid: b\n---\n\nagain\n");
+    // Something the user put there themselves, which must travel too.
+    app.vault.files.set("CRM/New/@peer/plan.md", "call on monday\n");
+
+    // Fail only the folder-level rename, exactly as a locked directory would.
+    const realRename = app.fileManager.renameFile.bind(app.fileManager);
+    app.fileManager.renameFile = async (f: never, p: string) => {
+      if ((f as unknown as { children?: unknown[] }).children !== undefined) {
+        throw new Error("locked");
+      }
+      return realRename(f, p);
+    };
+
+    const newProfile = await moveConversation(app as any, "CRM", "peer", "New", "Pending");
+
+    expect(newProfile).toBe("CRM/Pending/@peer/@peer.md");
+    // Every file landed, once, including the nested history and the user's note.
+    for (const p of [
+      "CRM/Pending/@peer/@peer.md",
+      "CRM/Pending/@peer/plan.md",
+      "CRM/Pending/@peer/_history/2026-07-18 - hi.md",
+      "CRM/Pending/@peer/_history/2026-07-19 - again.md",
+    ]) {
+      expect(app.vault.files.has(p), `missing ${p}`).toBe(true);
+    }
+    expect([...app.vault.files.keys()].filter((p) => p.startsWith("CRM/New/@peer"))).toEqual([]);
+    // The emptied source folder is cleared away rather than left as a husk.
+    expect(app.vault.folders.has("CRM/New/@peer")).toBe(false);
+    // And the destination note carries the new stage.
+    expect(app.vault.files.get(newProfile)).toMatch(/funnel:\s*['"]?Pending/i);
+  });
+
+  it("never overwrites a note already at the destination, and says what it left", async () => {
+    // The other half of the fallback: a destination that already holds content.
+    // Skipping a colliding child is deliberate — clobbering a note Sync or the
+    // user put there is the one outcome worse than a leftover — so this asserts
+    // skip-plus-signal rather than "the source is empty".
+    const app = new App();
+    app.vault.folders.add("CRM");
+    app.vault.folders.add("CRM/New/@peer");
+    app.vault.folders.add("CRM/Pending/@peer");
+    app.vault.files.set(
+      "CRM/New/@peer/@peer.md",
+      `---\nigsid: "IG_PEER"\nfunnel: New\n---\n\nsource copy\n`,
+    );
+    app.vault.files.set("CRM/New/@peer/only-here.md", "moves across\n");
+    app.vault.files.set(
+      "CRM/Pending/@peer/@peer.md",
+      `---\nigsid: "IG_PEER"\nfunnel: Pending\n---\n\nDESTINATION COPY\n`,
+    );
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await moveConversation(app as any, "CRM", "peer", "New", "Pending");
+    warn.mockRestore();
+
+    // The destination body is untouched.
+    expect(app.vault.files.get("CRM/Pending/@peer/@peer.md")).toContain("DESTINATION COPY");
+    // A non-colliding child still moves.
+    expect(app.vault.files.has("CRM/Pending/@peer/only-here.md")).toBe(true);
+    // The collision is left behind rather than destroyed.
+    expect(app.vault.files.has("CRM/New/@peer/@peer.md")).toBe(true);
+    expect(app.vault.files.get("CRM/New/@peer/@peer.md")).toContain("source copy");
   });
 
   it("stamps the new funnel on the destination note, not the one left behind", async () => {

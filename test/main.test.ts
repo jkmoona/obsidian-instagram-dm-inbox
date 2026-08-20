@@ -179,6 +179,38 @@ describe("manual funnel change", () => {
     expect(funnelPosts[0].body).toContain('"new"');
   });
 
+  it("shields the contact from reconcile before the server round-trip, not after", async () => {
+    // applyFunnelMove drops its in-flight guard in its own finally, so the POST
+    // used to be awaited with nothing protecting this contact. A tick landing in
+    // that window compares the folder against a pre-commit snapshot and moves it
+    // back, rewriting funnel: in the note on the way — which on the YAML path
+    // overwrites the edit the user just typed.
+    //
+    // Asserted from inside the request handler, because the ordering is the whole
+    // point: by the time the POST is on the wire, reconcile must already be
+    // skipping this contact.
+    const { plugin, anyPlugin } = makePlugin(app, "pending");
+    let pendingDuringPost: string | undefined;
+    installRoutes({
+      setFunnel: () => {
+        pendingDuringPost = plugin.settings.pendingFunnel[IGSID];
+        return { status: 200, json: {} };
+      },
+    });
+
+    await (anyPlugin.applyManualFunnel as (r: unknown, s: string) => Promise<void>).call(
+      plugin,
+      { username: USER, funnel: "Pending", igsid: IGSID },
+      "done",
+    );
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(pendingDuringPost).toBe("done");
+    // Cleared once the server has it, so nothing is left for drainPendingFunnel.
+    expect(plugin.settings.pendingFunnel[IGSID]).toBeUndefined();
+    expect(plugin.settings.contactFunnelCache[IGSID].toLowerCase()).toBe("done");
+  });
+
   it("keeps the server and the vault agreeing after the move", async () => {
     const { plugin, anyPlugin } = makePlugin(app, "pending");
     await (anyPlugin.applyManualFunnel as (r: unknown, s: string) => Promise<void>).call(
@@ -233,6 +265,48 @@ describe("manual funnel change", () => {
     expect(profilePath(app)).toBe(movedProfile);
     const posts = calls.filter((c) => c.url.includes("/status"));
     expect(posts.map((c) => c.body).join(" ")).not.toContain("pending");
+    expect(plugin.settings.contactFunnelCache[IGSID].toLowerCase()).toBe("done");
+  });
+
+  it("leaves a live conversation alone when a same-named folder is dragged in from outside", async () => {
+    // The one branch no other rename test reaches: the dragged folder's OLD path
+    // is outside the CRM tree, so crmRelParts returns null.
+    //
+    // That used to become `funnel: ""`, and funnelFolderName("") returns "New",
+    // so the move's source resolved to CRM/New/@alice — a real, live, unrelated
+    // conversation. Its _history notes were renamed into the folder the user had
+    // just dragged in and the emptied folder was trashed, reported as
+    // "@alice → Done". Everything below the first assertion is about the live
+    // conversation, which nothing in this scenario should touch.
+    const app = new App();
+    seedConversation(app, "New");
+    const { plugin } = makePlugin(app, "new");
+
+    const liveProfile = `CRM/New/@${USER}/@${USER}.md`;
+    const liveHistory = `CRM/New/@${USER}/_history/2026-07-28 - hi.md`;
+    const liveBodyBefore = app.vault.files.get(liveHistory);
+
+    // An archived copy of the same contact, kept outside the inbox tree, that the
+    // user drags into a stage folder.
+    const dragged = `CRM/Done/@${USER}`;
+    app.vault.folders.add("CRM/Done");
+    app.vault.folders.add(dragged);
+    app.vault.files.set(`${dragged}/@${USER}.md`, profileBody("new"));
+
+    app.vault.trigger("rename", new TFolder(dragged), `Archive/@${USER}`);
+    await new Promise((r) => setTimeout(r, 20));
+
+    // The live conversation is untouched: note still there, body unchanged.
+    expect(app.vault.files.has(liveProfile)).toBe(true);
+    expect(app.vault.files.get(liveHistory)).toBe(liveBodyBefore);
+    expect(app.vault.folders.has(`CRM/New/@${USER}/_history`)).toBe(true);
+    expect(app.vault.folders.has(`CRM/New/@${USER}`)).toBe(true);
+    // Nothing was carried into the dragged folder either.
+    expect([...app.vault.files.keys()].filter((p) => p.startsWith(dragged + "/_history"))).toEqual(
+      [],
+    );
+    // And the drag itself still took effect: the dragged note was stamped.
+    expect(app.vault.files.get(`${dragged}/@${USER}.md`)).toMatch(/funnel: ['"]?done/i);
     expect(plugin.settings.contactFunnelCache[IGSID].toLowerCase()).toBe("done");
   });
 

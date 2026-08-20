@@ -53,7 +53,11 @@ Each stage folder also holds an index note, `@New.md` inside `New/` and so on, l
 
 There are two separate things here, and you can use either one on its own.
 
-The **funnel stage** is the folder a conversation sits in. It drives everything structural: the folder, the colour in the file explorer, the card colour on the canvas, the cluster in the graph, and the index note. You get `new`, `pending` and `done` to start with, and you can rename them or add your own (up to 20). Stages work like Kanban columns.
+The **funnel stage** is the folder a conversation sits in. It drives everything structural: the folder, the card colour on the canvas, the cluster in the graph, and the index note. Stages work like Kanban columns.
+
+You get `new`, `pending` and `done` to start with, and nothing depends on those three: rename them, delete them, or replace all of them with your own. Up to 20. The only rules are that you keep at least one, that exactly one of them has a blank trigger code (that's where new conversations land), and that names are unique and usable as a folder name.
+
+Removing a stage leaves its conversations alone. The folder and the notes in it stay exactly where they are, and the plugin stops treating that folder as a stage. To bring those conversations back into your funnel, drag them into a stage you still have.
 
 The **status** is an optional free-text detail *within* a stage, like `waiting on money` or `thinking`. It lives in the note's frontmatter and changes nothing about folders, colours or the graph. It is entirely opt-in: if you never set one, no status field ever appears in your notes.
 
@@ -65,11 +69,13 @@ New DMs show up within seconds of arriving.
 
 You can move a conversation between stages by finishing an Instagram reply with a trigger code, from your phone, the web, or Business Suite. A code beginning with `!` fires when it ends your reply, so `Great, see you then! !done` files that conversation under Done. A code without `!` has to match your whole reply exactly, which lets you use a real sentence like `Great! See you then` as the trigger.
 
-From inside Obsidian there are three ways: right-click the profile or its folder and pick *Move to funnel stage*, drag the conversation's folder into another stage folder, or edit the `funnel:` field in the note. All three move the folder and tell the server.
+Give a `!` code something after the `!`. It matches the end of your reply, so a code of just `!` catches `Thanks!` and `see you tomorrow!` along with everything else you end that way, which is probably not what you meant. If it *is* what you meant, it works, and it's worth knowing why: when two codes both match, the longer one wins. So a bare `!` sits underneath your real codes as a catch-all, taking anything you end with an exclamation mark that a more specific code didn't already claim.
+
+From inside Obsidian there are three ways: right-click the profile or its folder and pick *Move to funnel stage*, drag the conversation's folder into another stage folder, or edit the `funnel:` field in the note. All three move the folder and tell the server. All three also need a stage that already exists: typing a new name into `funnel:` won't create one, it just tells you the stage is unknown. Stages are made in plugin settings.
 
 To set a status, right-click and pick *Set conversation status*, or run it from the command palette. The picker offers whatever statuses that stage already knows about, accepts anything else you type, and has a *Clear status* row. Anything new you type is remembered against that stage, so it's offered next time.
 
-Stage folders are colour-coded in the file explorer, and `_meta`, which holds the canvas and the plugin's own logs, is hidden so it doesn't clutter your tree.
+`_meta`, which holds the canvas and the plugin's own logs, is hidden from the file explorer so it doesn't clutter your tree.
 
 If a message ever can't be filed into a conversation, its text is written to `_unfiled` instead of being dropped, and you get a notice. That folder stays visible on purpose, and nothing in it is managed: read the note, move it, delete it, whatever you like.
 
@@ -91,7 +97,7 @@ Run *Set up graph view*, from plugin settings or the command palette. Two things
 
 Close the graph view first: an open graph writes its own settings back when it closes and would overwrite the change. The command refuses and tells you if it finds one open.
 
-Reordering your stages recolours the file explorer and the canvas straight away, but not the graph, because the graph keeps its own copy of the colours. Run *Set up graph view* again afterwards if you want all three to match.
+Reordering your stages recolours the canvas straight away, but not the graph, because the graph keeps its own copy of the colours. Run *Set up graph view* again afterwards if you want both to match.
 
 The command only adds. Colour groups you made yourself stay as they are, anything already in the filter box is kept, and running it a second time does nothing. Your previous graph settings are backed up to `_meta/graph.json.pre-igcrm.bak` inside your inbox folder the first time it runs. To get the full graph back, clear the filter box in the graph settings.
 

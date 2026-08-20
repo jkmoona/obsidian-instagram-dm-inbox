@@ -186,4 +186,40 @@ describe("escapeYaml", () => {
     expect(body.startsWith("---\n")).toBe(true);
     expect(body.indexOf("\n---", 3)).toBeGreaterThan(0);
   });
+
+  it.each(["!hot", "@vip", "%done", "{x}", "- lead"])(
+    "quotes a stage named %j, which YAML would otherwise not read as text",
+    async (stage) => {
+      // validateFunnelName accepts every one of these, and `!hot` is a plausible
+      // name rather than a contrived one: the trigger-code box on the same
+      // settings row is placeholdered `!code`.
+      //
+      // None of them can be a plain YAML scalar. `!` opens a tag shorthand, `@`
+      // and `%` are reserved indicators, `- ` starts a block sequence, and `{x}`
+      // is a flow mapping. Written raw, the block either fails to parse or gives
+      // `funnel` something other than a string, and from then on frontmatterOf
+      // returns undefined for that note forever: the display name never lands,
+      // stage writes report failure while still moving the folder, and status
+      // writes refuse. Hand-editing the YAML is the only way back.
+      const app = new App();
+      await ensureProfileNote(app as never, "CRM", stage, "peer", "IG_PEER");
+
+      const path = [...app.vault.files.keys()].find((p) => p.endsWith(".md"))!;
+      const body = app.vault.files.get(path)!;
+
+      // Quoted, so the indicator character is data rather than syntax.
+      expect(body).toContain(`funnel: "${stage}"`);
+      // created: too, for the same reason: it is the other unquoted value.
+      expect(body).toMatch(/^created: ".*"$/m);
+
+      // The proof that matters: the block still round-trips through the
+      // frontmatter API, which is what every later write goes through.
+      const file = app.vault.getAbstractFileByPath(path)!;
+      await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+        expect(fm.funnel).toBe(stage);
+        fm.name = "Someone";
+      });
+      expect(app.vault.files.get(path)).toContain("Someone");
+    },
+  );
 });

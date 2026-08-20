@@ -130,8 +130,14 @@ export const MAX_TRIGGER_CODE_LENGTH = 120;
 
 // Mirrors validate_funnel_name() on the server: stage names become folder
 // names and are embedded in wikilinks, so they must be safe path segments.
-// eslint-disable-next-line no-control-regex
-const FORBIDDEN_IN_FUNNEL_NAME = /[\\/:*?"<>|#^[\]\x00-\x1f]/;
+//
+// `\p{Cc}` rather than a literal `\x00-\x1f` range, which is what the control
+// characters have to be matched as in order to be rejected. Two reasons: writing
+// the range out puts control escapes in the source, which `no-control-regex`
+// flags and which then needs suppressing, and the range misses DEL and the C1
+// block (U+007F-U+009F). Those are equally illegal here. The server's copy spells
+// the same set as [\x00-\x1f\x7f-\x9f], because Python's `re` has no \p{Cc}.
+const FORBIDDEN_IN_FUNNEL_NAME = /[\\/:*?"<>|#^[\]]|\p{Cc}/u;
 
 /** Return why `name` can't be used as a funnel stage, or null if it's fine. */
 export function validateFunnelName(name: string): string | null {
