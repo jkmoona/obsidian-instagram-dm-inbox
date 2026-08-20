@@ -431,11 +431,20 @@ export class PluginSettingTab {
     createEl: () => ({ setText: () => {}, setCssStyles: () => {} }),
     createDiv: () => ({ empty: () => {} }),
   } as unknown as HTMLElement;
+  /** Populated by update(), as on 1.13+. */
+  settingItems: unknown[] = [];
   constructor(app: App, plugin: unknown) {
     this.app = app;
     this.plugin = plugin;
   }
-  display() {}
+  getSettingDefinitions(): unknown[] {
+    return [];
+  }
+  /** Real contract: stores getSettingDefinitions() for rendering and search
+   *  indexing. Modelled because refresh() calls it unconditionally now. */
+  update(): void {
+    this.settingItems = this.getSettingDefinitions();
+  }
 }
 
 /**
@@ -466,6 +475,7 @@ export interface FakeRow {
   name: string;
   desc: string;
   heading: boolean;
+  classes: string[];
   texts: FakeText[];
   toggles: FakeToggle[];
   buttons: FakeButton[];
@@ -482,6 +492,7 @@ export class Setting {
     name: "",
     desc: "",
     heading: false,
+    classes: [],
     texts: [],
     toggles: [],
     buttons: [],
@@ -499,6 +510,12 @@ export class Setting {
   }
   setHeading(): this {
     this.row.heading = true;
+    return this;
+  }
+  /** Real setClass adds to settingEl, which is why Obsidian's own `mod-toggle`
+   *  works alongside `setting-item`. */
+  setClass(cls: string): this {
+    this.row.classes.push(cls);
     return this;
   }
   addText(cb: (t: TextComponent) => void): this {

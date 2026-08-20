@@ -3,6 +3,25 @@
 All notable changes to the Instagram DM Inbox plugin.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.3.0 - 2026-08-20
+
+### Needs Obsidian 1.13 or newer
+
+Obsidian 1.13 replaced the old way of building a settings tab with a declarative one,
+and kept the old way only as a fallback for plugins supporting earlier versions. This
+plugin carried both. Requiring 1.13 means there is one settings tab instead of two
+descriptions of it that could drift apart — which they have, twice.
+
+If you are on an older Obsidian, nothing breaks: it keeps installing 0.2.1, which has
+every fix listed below it. Update Obsidian to carry on getting new versions.
+
+### Fixes
+
+- Stage folders in the file explorer are hidden with a cheaper CSS rule. No visible
+  change; the previous one used a selector the community review flags for its cost.
+- Internal: two unused imports removed, and `npm run typecheck` now runs in CI so that
+  cannot ship again.
+
 ## 0.2.1 - 2026-08-20
 
 Nothing here changes your vault or your settings.

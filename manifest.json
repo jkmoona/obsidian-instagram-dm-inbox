@@ -1,8 +1,8 @@
 {
   "id": "instagram-dm-inbox",
   "name": "Instagram DM Inbox",
-  "version": "0.2.1",
-  "minAppVersion": "1.6.6",
+  "version": "0.3.0",
+  "minAppVersion": "1.13.0",
   "description": "Mirror your Instagram Business DMs into your vault as notes, and move each conversation through funnel stages you define.",
   "author": "jkmoona",
   "authorUrl": "https://github.com/jkmoona",

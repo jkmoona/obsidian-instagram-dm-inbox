@@ -1,6 +1,5 @@
 import {
   App,
-  ButtonComponent,
   Notice,
   PluginSettingTab,
   Setting,
@@ -12,7 +11,6 @@ import type IgCrmPlugin from "./main";
 import { IgCrmClient } from "./api";
 import { cleanPath } from "./vault";
 import {
-  DEFAULT_SETTINGS,
   Funnel,
   MAX_STATUSES_PER_FUNNEL,
   MAX_STATUS_LENGTH,
@@ -28,13 +26,10 @@ const STAGE_HELP =
   "conversations land. A status is an optional label within a stage.";
 
 /**
- * The settings tab, defined once and rendered two ways.
+ * The settings tab, defined once.
  *
- * `getSettingDefinitions()` is the source of truth. On Obsidian 1.13 and newer
- * the app renders from it directly and indexes it for settings search, which
- * is what 0.1.6 lost by deleting the method. `display()` below walks the same
- * array with the imperative API for anyone on an older build, so the two can
- * never describe different tabs.
+ * `getSettingDefinitions()` is the whole tab: Obsidian renders from it and indexes
+ * it for settings search. Deleting it cost that indexing once, in 0.1.6.
  */
 export class IgCrmSettingTab extends PluginSettingTab {
   plugin: IgCrmPlugin;
@@ -179,9 +174,9 @@ export class IgCrmSettingTab extends PluginSettingTab {
         action: () => void this.plugin.setupGraphView(),
       },
       {
-        // Its own row rather than something the fallback renderer draws, which
-        // is what it used to be: 1.13+ never calls display(), so most users saw
-        // the stage editor with nothing explaining trigger codes or statuses.
+        // Its own row. It used to be drawn by the imperative renderer, which
+        // Obsidian stopped calling, so most users saw the stage editor with
+        // nothing explaining trigger codes or statuses.
         name: "About stages and statuses",
         desc: STAGE_HELP,
       },
@@ -243,6 +238,9 @@ export class IgCrmSettingTab extends PluginSettingTab {
       // search finds the row rather than just the heading.
       aliases: [row.name].filter(Boolean),
       render: (setting: Setting) => {
+        // Three inputs in one setting row, which Obsidian's layout sizes for one.
+        // The class is what styles.css hooks to let it wrap.
+        setting.setClass("igcrm-stage-row");
         // A note, not a refusal. This configuration works and is sometimes what
         // someone wants, but it is broad enough to be worth saying out loud.
         if (row.code && /^!+$/.test(row.code.trim())) {
@@ -334,100 +332,11 @@ export class IgCrmSettingTab extends PluginSettingTab {
     if (key === "apiKey") this.plugin.resumePolling();
   }
 
-  /**
-   * Redraw after the definitions change.
-   *
-   * `update()` is `@since 1.13.0`. On anything older it is simply not there,
-   * so calling it throws, and it would throw on exactly the installs the
-   * `display()` fallback below exists to serve, taking out every button in the
-   * tab. On 1.13+ `update()` is the one that refreshes the search index, so it
-   * has to be preferred where it exists.
-   */
+  /** Redraw after the definitions change. `update()` re-reads them and refreshes
+   *  the settings-search index. */
   private refresh(): void {
-    const maybe = (this as unknown as { update?: () => void }).update;
-    if (typeof maybe === "function") maybe.call(this);
-    else this.display();
+    this.update();
   }
-
-  // --- the pre-1.13 renderer ----------------------------------------------
-
-  display(): void {
-    const { containerEl } = this;
-    containerEl.empty();
-    for (const item of this.getSettingDefinitions()) this.renderItem(containerEl, item);
-  }
-
-  /** Walk one definition with the imperative API. Kept deliberately small: it
-   *  only has to handle the shapes this tab actually uses. */
-  private renderItem(root: HTMLElement, item: SettingDefinitionItem): void {
-    const any = item as unknown as Record<string, unknown>;
-
-    if (any.type === "list" || any.type === "group") {
-      const group = item as SettingDefinitionList;
-      if (group.visible !== undefined && !resolve(group.visible)) return;
-      if (group.heading) new Setting(root).setName(group.heading).setHeading();
-      const items = group.items ?? [];
-      if (items.length === 0 && group.emptyState) {
-        root.createEl("p", { cls: "igcrm-help", text: String(group.emptyState) });
-      }
-      items.forEach((child, i) => {
-        this.renderItem(root, child);
-        // The declarative renderer supplies delete affordances itself; this
-        // fallback has to draw its own.
-        if (group.onDelete) {
-          new Setting(root).addButton((b: ButtonComponent) =>
-            b
-              .setIcon("trash")
-              .setTooltip("Remove stage")
-              .onClick(() => group.onDelete!(i)),
-          );
-        }
-      });
-      if (group.addItem) {
-        new Setting(root).addButton((b) =>
-          b.setButtonText(group.addItem!.name).onClick(() => group.addItem!.action(root)),
-        );
-      }
-      return;
-    }
-
-    if (any.visible !== undefined && !resolve(any.visible)) return;
-
-    const setting = new Setting(root);
-    if (typeof any.name === "string") setting.setName(any.name);
-    if (typeof any.desc === "string") setting.setDesc(any.desc);
-
-    if (typeof any.render === "function") {
-      (any.render as (s: Setting) => void)(setting);
-    } else if (typeof any.action === "function") {
-      setting.addButton((b: ButtonComponent) =>
-        b
-          .setButtonText(String(any.name ?? "Run"))
-          .onClick(() => (any.action as (el: HTMLElement, i: number) => void)(root, 0)),
-      );
-    } else if (any.control) {
-      this.renderControl(setting, any.control as Record<string, unknown>);
-    }
-  }
-
-  private renderControl(setting: Setting, control: Record<string, unknown>): void {
-    const key = String(control.key);
-    const current = this.getControlValue(key);
-    if (control.type === "toggle") {
-      setting.addToggle((t) =>
-        t.setValue(Boolean(current)).onChange((v: boolean) => void this.setControlValue(key, v)),
-      );
-      return;
-    }
-    setting.addText((t) => {
-      if (typeof control.placeholder === "string") t.setPlaceholder(control.placeholder);
-      t.setValue(current === undefined || current === null ? "" : String(current)).onChange(
-        (v: string) => void this.setControlValue(key, v),
-      );
-    });
-  }
-
-  // --- actions -------------------------------------------------------------
 
   private async testConnection(): Promise<void> {
     const client = new IgCrmClient(this.plugin.settings.serverUrl, this.plugin.settings.apiKey);
@@ -539,8 +448,4 @@ export function parseStatusList(raw: string): string[] {
     if (out.length >= MAX_STATUSES_PER_FUNNEL) break;
   }
   return out;
-}
-
-function resolve(v: unknown): boolean {
-  return typeof v === "function" ? Boolean((v as () => boolean)()) : Boolean(v);
 }

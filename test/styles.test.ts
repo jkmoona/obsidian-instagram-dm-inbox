@@ -26,20 +26,19 @@ describe("styling", () => {
   });
 
   it("builds no stylesheet at runtime", () => {
-    // The 0.2.0 community review failed on this as an Error: "Creating and
-    // attaching 'style' elements is not allowed. For loading CSS, use a
-    // 'styles.css' file instead, which Obsidian loads for you."
-    //
-    // It shipped because the explorer stage colours needed a user-defined folder
-    // name inside a [data-path=...] selector, which styles.css cannot express, so
-    // the sheet was generated and injected into <head>. The feature is gone and
-    // the only way it comes back is by accident, which is what this catches.
-    //
-    // Anything dynamic belongs in styles.css keyed on a class or attribute the
-    // plugin sets, never in a generated sheet.
+    // An Error in the 0.2.0 review. Anything dynamic belongs in styles.css keyed on
+    // a class or attribute the plugin sets. See DEVELOPMENT.md, Community review.
     const banned = /createElement\(\s*["'`](?:style|link)["'`]|document\.head|adoptedStyleSheets|insertRule\(/;
     const offenders = sources.filter((s) => banned.test(s.text)).map((s) => s.name);
     expect(offenders).toEqual([]);
+  });
+
+  it("uses no :has() in styles.css", () => {
+    // Flagged in the 0.2.1 review for invalidation cost. A sibling or descendant
+    // selector has always covered what this plugin needs. Comments stripped first,
+    // so explaining the rule does not trip it.
+    const declarations = styles.replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(declarations).not.toContain(":has(");
   });
 
   it("defines every igcrm- class the source references", () => {
@@ -83,17 +82,18 @@ describe("vault API usage", () => {
 describe("settings tab", () => {
   const settings = sources.find((s) => s.name === "settings.ts")!.text;
 
-  it("keeps both the declarative and the imperative rendering paths", () => {
-    // 0.1.4 added getSettingDefinitions and it silently suppressed a richer
-    // display(); 0.1.6 removed it and lost settings-search indexing. One
-    // assertion catches either mistake coming back.
+  it("renders only declaratively", () => {
+    // minAppVersion is 1.13, so getSettingDefinitions is the whole tab and the
+    // imperative fallback is gone. Both halves matter: without the first, 0.1.6's
+    // loss of settings-search indexing returns; without the second, a second
+    // renderer can drift from it again, which is how 0.1.4 shipped a tab missing
+    // the stage editor.
     //
-    // Matched as a declaration at class-body indentation, not as a substring.
-    // `toContain("display(")` was the first attempt and it guarded nothing:
-    // three comments and the `this.display()` call at settings.ts:310 all
-    // contain it, so deleting the method left the test green.
+    // Declarations at class-body indentation, not substrings: `toContain("display(")`
+    // guarded nothing, since comments and a `this.display()` call both matched it.
     expect(settings).toMatch(/^ {2}getSettingDefinitions\(\)/m);
-    expect(settings).toMatch(/^ {2}display\(\)/m);
+    expect(settings).not.toMatch(/^ {2}display\(\)/m);
+    expect(settings).not.toMatch(/^ {2}private renderItem\(/m);
   });
 
   it("overrides both control accessors", () => {

@@ -1,16 +1,12 @@
 /**
- * The settings tab has broken twice, in opposite directions.
- *
- * 0.1.4 added getSettingDefinitions() and Obsidian silently stopped calling
- * display(), so users on 1.13+ lost the stage editor and the Test connection
- * button and got their API key rendered in clear text. 0.1.6 fixed that by
- * deleting the method, which cost settings-search indexing and drew a review
- * warning. Both paths now exist, and both are asserted here.
+ * The settings tab has broken twice, in opposite directions: 0.1.4 added
+ * getSettingDefinitions() and Obsidian stopped calling display(), so 1.13+ lost the
+ * stage editor; 0.1.6 deleted getSettingDefinitions() and lost settings-search
+ * indexing. Since 0.3.0 requires 1.13, the declarative definitions are the only
+ * renderer and neither mistake is available.
  */
 import { beforeEach, describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { App, __renderedRows, __resetRenderedRows, __setRequestUrl } from "obsidian";
+import { App, Setting, __renderedRows, __setRequestUrl } from "obsidian";
 import IgCrmPlugin from "../src/main";
 import { IgCrmSettingTab, parseStatusList } from "../src/settings";
 import { DEFAULT_FUNNELS, PluginSettings } from "../src/types";
@@ -23,7 +19,6 @@ function makeTab(overrides: Partial<PluginSettings> = {}) {
   // Both belong to Obsidian and need a real DOM; the definitions are what
   // these tests are about.
   (tab as unknown as Record<string, unknown>).update = () => undefined;
-  (tab as unknown as Record<string, unknown>).display = () => undefined;
   return { app, plugin, tab };
 }
 
@@ -43,20 +38,6 @@ const byName = (tab: IgCrmSettingTab, name: string) =>
   defs(tab).find((d) => d.name === name) as Def | undefined;
 
 beforeEach(() => __setRequestUrl(() => ({ status: 200, json: [] })));
-
-describe("both rendering paths exist", () => {
-  const source = readFileSync(join(__dirname, "..", "src", "settings.ts"), "utf8");
-
-  it("defines getSettingDefinitions and display", () => {
-    expect(source).toContain("getSettingDefinitions()");
-    expect(source).toContain("display(): void");
-  });
-
-  it("returns a non-empty array, or Obsidian falls back to display()", () => {
-    const { tab } = makeTab();
-    expect(defs(tab).length).toBeGreaterThan(5);
-  });
-});
 
 describe("the definitions cover the whole tab", () => {
   it("has every setting the imperative tab used to render", () => {
@@ -395,42 +376,6 @@ describe("parseStatusList", () => {
   });
 });
 
-describe("redrawing on older Obsidian", () => {
-  it("falls back to display() when update() does not exist", () => {
-    // update() is @since 1.13.0. On an older build it is simply absent, and
-    // calling it threw, inside the very fallback renderer those installs use,
-    // so every button in the tab was dead.
-    const { tab } = makeTab();
-    const anyTab = tab as unknown as Record<string, unknown>;
-    delete anyTab.update;
-    let displayed = 0;
-    anyTab.display = () => {
-      displayed += 1;
-    };
-
-    (anyTab.refresh as () => void).call(tab);
-
-    expect(displayed).toBe(1);
-  });
-
-  it("prefers update() where it exists, since that is what indexes search", () => {
-    const { tab } = makeTab();
-    const anyTab = tab as unknown as Record<string, unknown>;
-    let updated = 0;
-    let displayed = 0;
-    anyTab.update = () => {
-      updated += 1;
-    };
-    anyTab.display = () => {
-      displayed += 1;
-    };
-
-    (anyTab.refresh as () => void).call(tab);
-
-    expect(updated).toBe(1);
-    expect(displayed).toBe(0);
-  });
-});
 
 describe("editing the stage list", () => {
   it("does not persist until Save stages runs", async () => {
@@ -449,6 +394,26 @@ describe("editing the stage list", () => {
 
     expect(saves).toBe(0);
   });
+
+  it("tags each stage row so styles.css can lay it out", () => {
+    // Three inputs go into one Obsidian setting row, whose two columns are both
+    // flex: 1 1 auto with no wrapping — so a narrow pane squeezed the "#1" column
+    // away. The class is the hook the CSS needs; without it the rule matches
+    // nothing and the squeeze comes back silently.
+    const { tab } = makeTab();
+    const list = defs(tab).find((d) => d.type === "list") as Record<string, unknown>;
+    const rowDefs = list.items as { render: (s: Setting) => void }[];
+    expect(rowDefs.length).toBeGreaterThan(0);
+
+    for (const def of rowDefs) {
+      const setting = new Setting(null);
+      def.render(setting);
+      const row = __renderedRows.at(-1)!;
+      expect(row.classes).toContain("igcrm-stage-row");
+      // And the row still builds its three inputs, which is what needs the space.
+      expect(row.texts).toHaveLength(3);
+    }
+  });
 });
 
 describe("graph setup from settings", () => {
@@ -465,119 +430,4 @@ describe("graph setup from settings", () => {
   });
 });
 
-describe("the stage help reaches both renderers", () => {
-  it("is a definition item, not something only the fallback draws", () => {
-    // It used to be drawn inside display()'s list branch. Obsidian 1.13+ never
-    // calls display(), so the majority of users saw the stage editor with
-    // nothing explaining trigger codes or the status list.
-    const { tab } = makeTab();
-    const help = byName(tab, "About stages and statuses");
-    expect(help).toBeDefined();
-    expect(String(help!.desc)).toMatch(/trigger|code/i);
-    expect(String(help!.desc)).toMatch(/status/i);
-  });
 
-  it("is not duplicated by the fallback renderer", () => {
-    const source = readFileSync(join(__dirname, "..", "src", "settings.ts"), "utf8");
-    const display = source.slice(source.indexOf("display(): void"));
-    expect(display).not.toContain("STAGE_HELP");
-  });
-});
-
-describe("the pre-1.13 renderer", () => {
-  // Obsidian below 1.13 never calls getSettingDefinitions, so display() and its
-  // two helpers are the whole tab for those users. They had no behavioural test
-  // at all: a wrong control key or a dead button would ship with every other
-  // test green, because minAppVersion is 1.6.6 and nothing here was exercised.
-
-  const render = (overrides: Partial<PluginSettings> = {}) => {
-    const made = makeTab(overrides);
-    // The real one, not the no-op the other tests install.
-    delete (made.tab as unknown as Record<string, unknown>).display;
-    __resetRenderedRows();
-    made.tab.display();
-    return made;
-  };
-
-  const row = (name: string) => __renderedRows.find((r) => r.name === name);
-
-  it("draws every setting the declarative tab declares", () => {
-    const { tab } = render();
-    const declared = tab
-      .getSettingDefinitions()
-      .map((d) => (d as unknown as Record<string, string>).name)
-      .filter(Boolean);
-
-    for (const name of declared) {
-      // The migration row is hidden unless a migration is pending, which is the
-      // one legitimate absence.
-      if (name === "Layout migration required") continue;
-      expect(row(name), `no row rendered for "${name}"`).toBeDefined();
-    }
-  });
-
-  it("masks the API key", () => {
-    // A plain text control here would put the key on screen in clear text.
-    const { tab } = render();
-    void tab;
-    expect(row("API key")!.texts[0].inputEl.type).toBe("password");
-  });
-
-  it("routes a typed value through setControlValue, not straight to disk", async () => {
-    const { plugin } = render();
-    let saved = 0;
-    plugin.saveSettings = async () => {
-      saved += 1;
-    };
-
-    row("Inbox folder")!.texts[0].fire("Leads/");
-
-    await Promise.resolve();
-    // Cleaned on the way in, and persisted through saveSettings so the poll
-    // timer and the explorer CSS are refreshed with it.
-    expect(plugin.settings.crmFolder).toBe("Leads");
-    expect(saved).toBe(1);
-  });
-
-  it("wires the toggle to its own key", async () => {
-    const { plugin } = render();
-    plugin.saveSettings = async () => undefined;
-
-    row("Debug logging")!.toggles[0].fire(true);
-
-    await Promise.resolve();
-    expect(plugin.settings.debugLogging).toBe(true);
-  });
-
-  it("gives each stage a row, and its delete button removes that stage", () => {
-    const { plugin, tab } = render();
-    const list = tab.getSettingDefinitions().find((d) => (d as { type?: string }).type === "list")!;
-    const names = plugin.settings.funnels.map((f) => f.name);
-
-    // One numbered row per stage, in order.
-    for (let i = 0; i < names.length; i++) {
-      expect(row(`#${i + 1}`), `no row for stage ${i + 1}`).toBeDefined();
-    }
-    // The delete affordance the declarative renderer supplies itself.
-    expect((list as unknown as { onDelete?: unknown }).onDelete).toBeTypeOf("function");
-    const trash = __renderedRows.flatMap((r) => r.buttons).filter((b) => b.icon === "trash");
-    expect(trash).toHaveLength(names.length);
-
-    // Clicked, not just counted. The button carries an index, and handing it
-    // the wrong one deletes somebody else's stage while looking correct.
-    trash[1].click();
-    expect(rows(tab)).toEqual([names[0], names[2]]);
-  });
-
-  it("runs an action when its button is clicked", () => {
-    const { plugin } = render();
-    let ran = 0;
-    plugin.setupGraphView = async () => {
-      ran += 1;
-    };
-
-    row("Set up graph view")!.buttons[0].click();
-
-    expect(ran).toBe(1);
-  });
-});

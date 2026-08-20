@@ -30,7 +30,6 @@ import {
   META_FOLDER,
   RecentEntry,
   cleanPath,
-  conversationFolder,
   conversationFolderIn,
   stageFolderSpelling,
   ensureFolder,

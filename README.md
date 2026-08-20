@@ -2,6 +2,8 @@
 
 Mirrors your Instagram Business DMs into your Obsidian vault, one note per message, filed under a profile note for the person who sent it. You sort conversations into funnel stages you define, and the stage is just the folder the conversation sits in, so the file explorer, the canvas and the graph all agree without any extra bookkeeping.
 
+Needs Obsidian 1.13 or newer. On an older version Obsidian installs 0.2.1 instead, which works but stops receiving updates.
+
 ## What it looks like
 
 Each conversation lives in a folder named after its funnel stage:

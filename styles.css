@@ -11,18 +11,39 @@
   opacity: 0.6;
 }
 
-/* Hide the plugin's own _meta folder, which holds the canvas and the debug log.
+/* A stage row holds three inputs where Obsidian's setting layout expects one.
+ * Both of its columns are flex: 1 1 auto with no wrapping, so as the pane narrows
+ * the inputs keep their width and the "#1" column is what disappears. Wrapping
+ * fixes it at every width, which a breakpoint would not: the settings pane is not
+ * the window. */
+.igcrm-stage-row {
+  flex-wrap: wrap;
+  row-gap: var(--size-4-1);
+}
+
+/* Enough for "#10" to survive. */
+.igcrm-stage-row .setting-item-info {
+  min-width: 4em;
+}
+
+.igcrm-stage-row .setting-item-control {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+/* Reflow onto another line rather than compressing to nothing. */
+.igcrm-stage-row .setting-item-control input {
+  flex: 1 1 14ch;
+  min-width: 0;
+}
+
+/* Hide the plugin's own _meta folder (canvas, debug log).
  *
- * Matched by suffix because the CRM folder is a user setting and CSS cannot
- * interpolate one into a selector. The cost is that a folder named `_meta`
- * anywhere else in the vault is hidden too.
- *
- * That cost is accepted rather than worked around. The alternative was building
- * this selector at runtime and injecting it as a <style> element, which is what
- * 0.2.0 did and what the community review rejected as an error. Stage colours
- * went the same way: they needed the folder name in a [data-path=...] selector,
- * so the file explorer no longer colours them. The canvas and the graph still
- * do, and both store their colours in files rather than in CSS. */
-.nav-folder:has(> .nav-folder-title[data-path$="/_meta"]) {
+ * The title and its adjacent children container, rather than the wrapper via a
+ * parent selector, which the review flags for invalidation cost and which was never
+ * needed here. Suffix match because the CRM folder is a user setting, so a folder
+ * named _meta elsewhere is hidden too. */
+.nav-folder-title[data-path$="/_meta"],
+.nav-folder-title[data-path$="/_meta"] + .nav-folder-children {
   display: none;
 }

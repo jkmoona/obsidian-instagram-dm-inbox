@@ -25,8 +25,12 @@ Copy `manifest.json`, `main.js`, and `styles.css` into `<vault>/.obsidian/plugin
 
 ```bash
 npm test          # vitest
-npm run typecheck # tsc over src/
+npm run typecheck # tsc over src/, with noUnusedLocals
 ```
+
+Both run in the release workflow and in the monorepo's mirror pre-flight, so either
+one failing blocks a release. `typecheck` was added to both after a release shipped
+two unused imports that only the community review caught.
 
 The suite runs against a hand-rolled `obsidian` module stub in `test/obsidian-stub.ts`, which is deliberately as strict as the real thing where that matters: `createFolder` throws when the folder exists, `TFile` identity survives a rename, and the frontmatter serialiser quotes the way Obsidian's does. Making the stub permissive is how bugs hide.
 
@@ -47,8 +51,10 @@ release.
 | No imperative styling. No `setCssStyles`, no `el.style.x =`, no inline `style:`. | `assigns no styles imperatively` |
 | Every `igcrm-` class the source names exists in `styles.css`. | `defines every igcrm- class the source references` |
 | No `!important`, so a user snippet can still win. | `never uses !important` |
+| No `:has()` in `styles.css`; the review flags its invalidation cost. | `uses no :has() in styles.css` |
+| No unused imports or locals in `src/`. | `noUnusedLocals`, run by `npm run typecheck` |
 | `vault.adapter` only where the Vault API cannot reach, which is `graph.json`. | `reaches for the adapter only where the Vault API cannot` |
-| Both settings render paths stay, declarative and imperative. | `keeps both the declarative and the imperative rendering paths` |
+| Settings render declaratively only; no `display()`, no `renderItem`. | `renders only declaratively` |
 
 Two more that no test covers, because they are about how you write rather than what
 ships:
@@ -61,24 +67,29 @@ ships:
 - **Give every `eslint-disable` an inline description**, after a `--`. The reason
   sitting on the line above does not count.
 
-### Two report lines that are not defects
+### One report line that is not a defect
 
-- **Clipboard access, under `## Behavior`.** Read where it sits: next to
-  `Vault Read: Pass` and `Vault Write: Pass`. That section is a capability
-  inventory, not a defect list, so there is nothing to answer and answering it
-  reads as defensive. For your own reference: the one call is `copyDebugInfo`,
-  user-initiated and write-only, and the payload reports the server URL and API key
-  as `set`/`empty` rather than by value.
-- **`display()` is deprecated since 1.13.** Keep it, for one reason only:
-  `minAppVersion` is 1.6.6, so on anything below 1.13 `getSettingDefinitions()` is
-  never called and `display()` is the whole settings tab. Do not justify it with the
-  test that asserts both paths exist — that test is a consequence of the choice, not
-  evidence for it.
+**Clipboard access, under `## Behavior`.** Read where it sits: next to
+`Vault Read: Pass` and `Vault Write: Pass`. That section is a capability inventory,
+not a defect list, so there is nothing to answer and answering it reads as defensive.
+For your own reference: the one call is `copyDebugInfo`, user-initiated and
+write-only, and the payload reports the server URL and API key as `set`/`empty`
+rather than by value.
 
-  Open question, deliberately not answered yet: whether to require 1.13 and delete
-  the imperative renderer. It would remove a second rendering path that has already
-  caused two shipped bugs. It would also strand anyone below 1.13 on the version
-  they have. Worth deciding on purpose, not by reflex, and not during a review cycle.
+### Settings render one way only
+
+`minAppVersion` is 1.13.0 as of 0.3.0, so `getSettingDefinitions()` is the entire
+settings tab. There is no `display()` and no second renderer.
+
+That answers the `display()` deprecation the review raised three times. It was never
+about the override, which Obsidian's own typings sanction ("Only implement display()
+as a fallback for plugins that need to support Obsidian versions older than 1.13.0")
+— it was about `refresh()` calling it. Requiring 1.13 removed both. Anyone on an older
+Obsidian is served 0.2.1 through `versions.json`, which is what that file is for.
+
+Do not reintroduce an imperative path. The two shipped bugs it caused were 0.1.4, a
+tab missing the stage editor because the declarative definitions had drifted from it,
+and 0.1.6, settings-search indexing lost by deleting the declarative side instead.
 
 ### Worth adding
 
@@ -112,7 +123,6 @@ Development happens in a monorepo alongside the server, and this repository is a
 - `src/vault.ts`: write profile and message notes, move conversation folders, migrate legacy layouts.
 - `src/canvas.ts`: JSONCanvas roster, one card per contact, coloured by funnel stage, with path rewrites when a conversation moves.
 - `src/palette.ts`: the shared colour list, indexed by a stage's position.
-- `src/explorer_css.ts`: the generated file-explorer stylesheet.
 - `src/graph_colors.ts`: graph-view colour groups and filter terms.
 - `src/log.ts`: console helpers that keep the poll loop from flooding it.
 - `src/settings.ts`: the settings tab, defined declaratively and rendered two ways.
