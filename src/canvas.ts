@@ -40,7 +40,16 @@ function colorForFunnel(funnel: string, funnels: Funnel[]): string {
   return colorCssHexForIndex(i < 0 ? 0 : i);
 }
 
-export async function loadCanvas(app: App, path: string): Promise<Canvas> {
+/**
+ * Read a canvas, or null when the file exists but its JSON will not parse.
+ *
+ * Null rather than an empty canvas. An empty canvas reads as "nothing here to
+ * keep", and the caller then writes a rebuilt roster straight over a file it
+ * could not understand, taking every card the user placed and every edge they
+ * drew with it. A missing or empty file is genuinely empty, so that still
+ * returns a canvas.
+ */
+export async function loadCanvas(app: App, path: string): Promise<Canvas | null> {
   const normalized = normalizePath(path);
   const file = app.vault.getAbstractFileByPath(normalized);
   if (!(file instanceof TFile)) {
@@ -56,7 +65,7 @@ export async function loadCanvas(app: App, path: string): Promise<Canvas> {
   try {
     data = JSON.parse(text) as Partial<Canvas>;
   } catch {
-    return { nodes: [], edges: [] };
+    return null;
   }
   return {
     nodes: data.nodes ?? [],

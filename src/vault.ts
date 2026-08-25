@@ -28,6 +28,28 @@ function frontmatterOf(app: App, file: TFile): Record<string, unknown> | undefin
 }
 
 /**
+ * Read `funnel:` from the file itself, or null when it has no such key.
+ *
+ * The metadata cache is debounced, so just after a write it still serves the
+ * previous frontmatter. A caller that would act destructively on a divergence
+ * has to confirm against the file. `read`, not `cachedRead`: the cache is the
+ * same stale source.
+ *
+ * Bounded to the leading `---` block on purpose. An unbounded match is what
+ * once rewrote a `funnel:` line in a note's body, described on setProfileFunnel.
+ */
+export async function funnelOnDisk(app: App, file: TFile): Promise<string | null> {
+  const block = /^---\r?\n([\s\S]*?)\r?\n---/.exec(await app.vault.read(file));
+  if (!block) return null;
+  for (const line of block[1].split(/\r?\n/)) {
+    const match = /^funnel:\s*(.*)$/.exec(line);
+    if (!match) continue;
+    return match[1].trim().replace(/^["']|["']$/g, "").trim() || null;
+  }
+  return null;
+}
+
+/**
  * Given an arbitrary file or folder inside a conversation, return
  * the conversation's current funnel + username + igsid. Accepts a TFile
  * (the profile, a legacy flat message note, or a note inside `_history/`)
@@ -464,10 +486,14 @@ const CONTACTS_END = "<!-- igcrm:contacts-end -->";
 
 /** The funnel index note, e.g. `CRM/New/@New.md`. `@`-prefixed like every
  *  other note the plugin creates, so it can't collide with a note the user
- *  already keeps called `New` or `Done`. */
-export function funnelHubPath(crmFolder: string, funnel: string): string {
-  const folder = funnelFolderName(funnel);
-  return normalizePath(`${crmFolder}/${folder}/@${folder}.md`);
+ *  already keeps called `New` or `Done`.
+ *
+ *  Takes the stage folder as it is on disk. Both callers read it from a real
+ *  folder, so re-deriving the name here would rebuild `shipped` as `Shipped`:
+ *  on a case-insensitive disk ensureFolder then throws and stops hub upkeep for
+ *  every later stage, and on a case-sensitive one two folders share one hub. */
+export function funnelHubPath(crmFolder: string, stageFolder: string): string {
+  return normalizePath(`${crmFolder}/${stageFolder}/@${stageFolder}.md`);
 }
 
 /**
@@ -487,7 +513,8 @@ export async function syncFunnelHubs(
 ): Promise<void> {
   for (const [funnel, usernames] of byFunnel) {
     const path = funnelHubPath(crmFolder, funnel);
-    const folder = funnelFolderName(funnel);
+    // The name as it sits on disk. See funnelHubPath.
+    const folder = funnel;
     const existing = app.vault.getAbstractFileByPath(path);
 
     // Two different things, previously collapsed into one length check. A

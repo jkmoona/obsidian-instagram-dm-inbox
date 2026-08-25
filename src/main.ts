@@ -33,6 +33,7 @@ import {
   conversationFolderIn,
   stageFolderSpelling,
   ensureFolder,
+  funnelOnDisk,
   applyContactName,
   ensureProfileNote,
   findConversation,
@@ -376,8 +377,19 @@ export default class IgCrmPlugin extends Plugin {
       // The one place that prunes: a pre-0.2.0 canvas had a card per message,
       // and turning it into a roster is what the consent modal promised. The
       // original is already backed up to _meta.
-      const rebuilt = syncCanvasFromContacts(canvas, result.profiles, this.settings.funnels, true);
-      await saveCanvas(this.app, canvasPath, rebuilt);
+      if (canvas === null) {
+        new Notice(
+          `${this.settings.canvasFile} isn't valid JSON, so it was left alone. The rest of the migration ran.`,
+        );
+      } else {
+        const rebuilt = syncCanvasFromContacts(
+          canvas,
+          result.profiles,
+          this.settings.funnels,
+          true,
+        );
+        await saveCanvas(this.app, canvasPath, rebuilt);
+      }
 
       // Both flags, and only now that it worked. The legacy pass used to set
       // its own in a `finally`, so a migration that threw was recorded as done
@@ -1042,6 +1054,16 @@ export default class IgCrmPlugin extends Plugin {
       }
       const canvasPath = `${this.settings.crmFolder}/${this.settings.canvasFile}`;
       const current = await loadCanvas(this.app, canvasPath);
+      if (current === null) {
+        // Unparseable. Overwriting would discard every card the user placed, so
+        // leave it and say so once. Matches how graph.json is handled.
+        warnOnce(
+          "canvas-json",
+          `${this.settings.canvasFile} isn't valid JSON, so the canvas was left alone`,
+        );
+        return profiles;
+      }
+      clearWarn("canvas-json");
       const rebuilt = syncCanvasFromContacts(current, profiles, this.settings.funnels);
       if (!canvasEquals(current, rebuilt)) {
         // A canvas the plugin generated has no edges of its own, so edges
@@ -1114,7 +1136,9 @@ export default class IgCrmPlugin extends Plugin {
       if (oldDir !== null) {
         const canvasPath = `${folder}/${this.settings.canvasFile}`;
         const canvas = await loadCanvas(this.app, canvasPath);
-        if (rewriteCanvasPaths(canvas, oldDir, newDir)) {
+        // null means unparseable. Leave it: the links in it are already broken
+        // and rewriting would replace the file with a reparse of nothing.
+        if (canvas !== null && rewriteCanvasPaths(canvas, oldDir, newDir)) {
           await saveCanvas(this.app, canvasPath, canvas);
         }
       }
@@ -1506,6 +1530,13 @@ export default class IgCrmPlugin extends Plugin {
 
     // Loop breaker: YAML matches folder → nothing to do (including our own writes).
     if (yamlFunnel.toLowerCase() === ref.funnel.toLowerCase()) return;
+
+    // A divergence is either the user's own edit or the cache lagging a write we
+    // just made, and the cache cannot tell them apart. Confirm against the file:
+    // acting on the stale value moves the conversation back and pushes the old
+    // stage to the server, which is how a trigger-code move got undone.
+    const onDisk = await funnelOnDisk(this.app, file);
+    if (onDisk !== null && onDisk.toLowerCase() !== yamlFunnel.toLowerCase()) return;
 
     // Validate the new funnel is one the user has configured.
     const configured = this.settings.funnels.find(

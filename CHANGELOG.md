@@ -3,6 +3,22 @@
 All notable changes to the Instagram DM Inbox plugin.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.3.1 - 2026-08-25
+
+### Fixed
+
+- A trigger code sometimes moved a conversation and then moved it straight back.
+  Obsidian's metadata cache is debounced, so for a second or two after the move it still
+  reported the old `funnel:` value. The plugin read that as you editing the note by hand,
+  put the conversation back, and told the server the old stage. It now confirms against
+  the note on disk before acting on a change, so a stale cache cannot undo a move.
+- A `.canvas` file that is not valid JSON is no longer overwritten. It used to load as an
+  empty canvas, which was then replaced by a rebuilt roster, taking any card you had
+  placed with it. The file is now left alone and the plugin says so once.
+- A funnel stage folder you made yourself with a lowercase name, such as `shipped`, no
+  longer breaks its index note. The name was being re-capitalised to `Shipped`, which on
+  a case-insensitive drive stopped index notes being maintained for every stage after it.
+
 ## 0.3.0 - 2026-08-20
 
 ### Needs Obsidian 1.13 or newer

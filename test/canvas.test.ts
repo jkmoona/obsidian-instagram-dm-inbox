@@ -246,3 +246,28 @@ describe("canvas colours follow funnel", () => {
     expect(colorCssHexForIndex(-1)).toMatch(/^#[0-9a-f]{6}$/);
   });
 });
+
+describe("loadCanvas on a file it cannot parse", () => {
+  it("returns null instead of an empty canvas", async () => {
+    // An empty canvas reads as "nothing to keep", and the caller then writes a
+    // rebuilt roster over the file, discarding every card the user placed.
+    const { App } = await import("./obsidian-stub");
+    const { loadCanvas } = await import("../src/canvas");
+    const app = new App();
+    app.vault.folders.add("CRM");
+    app.vault.files.set("CRM/Inbox.canvas", "{ this is not json");
+
+    expect(await loadCanvas(app as never, "CRM/Inbox.canvas")).toBeNull();
+  });
+
+  it("still returns an empty canvas for a missing or blank file", async () => {
+    const { App } = await import("./obsidian-stub");
+    const { loadCanvas } = await import("../src/canvas");
+    const app = new App();
+    app.vault.folders.add("CRM");
+    app.vault.files.set("CRM/Blank.canvas", "   \n");
+
+    expect(await loadCanvas(app as never, "CRM/Missing.canvas")).toEqual({ nodes: [], edges: [] });
+    expect(await loadCanvas(app as never, "CRM/Blank.canvas")).toEqual({ nodes: [], edges: [] });
+  });
+});

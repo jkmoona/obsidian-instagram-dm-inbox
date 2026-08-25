@@ -762,6 +762,71 @@ describe("reconcile", () => {
     expect(app.vault.files.has(`CRM/New/@${USER}/_history/2026-07-28 - hi.md`)).toBe(true);
   });
 
+  it("does not revert the move when the metadata cache is still stale", async () => {
+    // Production failure, 2026-08-25. A trigger code moved the conversation to
+    // Done, then the server row went back to pending two seconds later. The
+    // move guard is already down by then, and metadataCache still served the
+    // pre-move frontmatter, so the watcher read "pending" inside Done, called
+    // it a hand edit, and undid both ends.
+    const app = new App();
+    seedConversation(app, "Pending");
+    const { plugin, anyPlugin } = makePlugin(app, "pending");
+    installRoutes({ contacts: () => ({ status: 200, json: [contactRow("done")] }) });
+
+    await runTick(plugin, anyPlugin);
+    const moved = `CRM/Done/@${USER}/@${USER}.md`;
+    expect(profilePath(app)).toBe(moved);
+
+    // The debounced event finally arrives, carrying the old frontmatter.
+    app.metadataCache.staleFrontmatter.set(moved, {
+      igsid: IGSID,
+      username: USER,
+      funnel: "pending",
+    });
+    calls = [];
+    app.metadataCache.trigger("changed", new TFile(moved));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(profilePath(app)).toBe(moved);
+    expect(calls.filter((c) => c.method === "POST")).toEqual([]);
+  });
+
+  it("still follows a real hand edit of the funnel key", async () => {
+    // The guard above must not become "ignore every event". Here the file on
+    // disk really does say pending while the folder says Done.
+    const app = new App();
+    seedConversation(app, "Done");
+    const { plugin, anyPlugin } = makePlugin(app, "done");
+    installRoutes({ contacts: () => ({ status: 200, json: [contactRow("done")] }) });
+
+    const path = `CRM/Done/@${USER}/@${USER}.md`;
+    app.vault.files.set(path, profileBody("pending"));
+    calls = [];
+    app.metadataCache.trigger("changed", new TFile(path));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(profilePath(app)).toBe(`CRM/Pending/@${USER}/@${USER}.md`);
+    expect(calls.some((c) => c.method === "POST" && c.url.includes("/status"))).toBe(true);
+  });
+
+  it("leaves a corrupt canvas alone instead of overwriting it", async () => {
+    // The rebuilt roster used to be written straight over a file that would not
+    // parse, and the backup was gated on an edge count that is zero in exactly
+    // that case. Every card the user placed went with it.
+    const app = new App();
+    seedConversation(app, "New");
+    const canvasPath = "CRM/_meta/Inbox.canvas";
+    const broken = "{ not json at all";
+    app.vault.folders.add("CRM/_meta");
+    app.vault.files.set(canvasPath, broken);
+    const { plugin, anyPlugin } = makePlugin(app, "new");
+    installRoutes({ contacts: () => ({ status: 200, json: [contactRow("new")] }) });
+
+    await runTick(plugin, anyPlugin);
+
+    expect(app.vault.files.get(canvasPath)).toBe(broken);
+  });
+
   it("never creates an empty conversation folder for a contact it cannot find", async () => {
     const app = new App();
     app.vault.folders.add("CRM");

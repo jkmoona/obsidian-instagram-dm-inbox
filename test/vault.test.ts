@@ -802,6 +802,19 @@ describe("syncFunnelHubs", () => {
     expect(app.vault.files.get(funnelHubPath("CRM", "Done"))).not.toContain("[[@alice]]");
   });
 
+  it("keeps a hand-made lowercase stage folder as it is on disk", async () => {
+    // Re-deriving the name rebuilt "shipped" as "Shipped". On a case-insensitive
+    // disk ensureFolder then throws, and the throw leaves the byFunnel loop, so
+    // hub upkeep stopped for every stage after it.
+    const app = new App();
+    seedContact(app, "shipped", "alice");
+    await syncFunnelHubs(app as any, "CRM", new Map([["shipped", ["alice"]]]));
+
+    expect(funnelHubPath("CRM", "shipped")).toBe("CRM/shipped/@shipped.md");
+    expect(app.vault.files.get("CRM/shipped/@shipped.md")).toContain("[[@alice]]");
+    expect(app.vault.files.has("CRM/Shipped/@Shipped.md")).toBe(false);
+  });
+
   it("emits links that resolve to real profile notes", async () => {
     const app = new App();
     seedContact(app, "New", "alice");

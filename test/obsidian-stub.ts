@@ -271,8 +271,16 @@ export class FakeMetadataCache {
    *  only reason the file-reading fallbacks exist. */
   coldPaths = new Set<string>();
 
+  /** Frontmatter the cache is still serving for a path, whatever the file now
+   *  says. Obsidian debounces indexing by a couple of seconds, so after a write
+   *  it really does hand back the previous frontmatter for a while. That lag is
+   *  what let a stage move get reverted. */
+  staleFrontmatter = new Map<string, Record<string, unknown>>();
+
   getFileCache = (file: TAbstractFile) => {
     if (this.coldPaths.has(file.path)) return null;
+    const stale = this.staleFrontmatter.get(file.path);
+    if (stale) return { frontmatter: stale };
     const body = this.vault.files.get(file.path);
     if (body === undefined) return null;
     const frontmatter = parseFrontmatter(body);
